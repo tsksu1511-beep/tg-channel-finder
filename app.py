@@ -2,6 +2,7 @@ import streamlit as st
 import httpx
 import pandas as pd
 import json
+import re
 import time
 import os
 from io import BytesIO
@@ -463,6 +464,65 @@ def analyze_brief(brief_text: str, client: Groq) -> dict:
         return {}
 
 
+def extract_keywords(brief: dict, client: Groq) -> list:
+    prompt = f"""Составь поисковые запросы для поиска Telegram-каналов по рекламному брифу.
+
+Продукт: {brief.get("product", "")}
+Ниша: {brief.get("niche", "")}
+ЦА: {brief.get("target_audience", "")}
+
+Верни JSON с 8 ключевыми словами/фразами на русском (тематика каналов, не название продукта):
+{{"keywords": ["слово1", "фраза два", ...]}}"""
+    try:
+        result = ask_json(client, prompt)
+        return result.get("keywords", [])[:8]
+    except Exception:
+        return []
+
+
+def search_duckduckgo(query: str) -> list:
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept-Language": "ru-RU,ru;q=0.9",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    }
+    try:
+        resp = httpx.get(
+            "https://html.duckduckgo.com/html/",
+            params={"q": query, "kl": "ru-ru", "ia": "web"},
+            headers=headers,
+            timeout=15,
+            follow_redirects=True,
+        )
+        if resp.status_code != 200:
+            return []
+        found = re.findall(
+            r't\.me/(?!joinchat|s/|\+|share/)([A-Za-z][A-Za-z0-9_]{3,31})(?=[^A-Za-z0-9_/]|$)',
+            resp.text,
+        )
+        return list(dict.fromkeys(found))
+    except Exception:
+        return []
+
+
+def search_web_for_channels(brief: dict, client: Groq, target_count: int) -> list:
+    keywords = extract_keywords(brief, client)
+    if not keywords:
+        return []
+    all_usernames = []
+    seen = set()
+    for kw in keywords:
+        found = search_duckduckgo(f"site:t.me {kw}")
+        for u in found:
+            if u.lower() not in seen:
+                seen.add(u.lower())
+                all_usernames.append(u)
+        time.sleep(0.5)
+        if len(all_usernames) >= target_count:
+            break
+    return all_usernames
+
+
 def generate_channels(brief: dict, reference_channels: list, client: Groq, count: int, exclude: set = None) -> list:
     """Запрашиваем count каналов у AI. exclude — уже проверенные username-ы."""
     if exclude is None:
@@ -783,16 +843,26 @@ if run:
     ref_handles = parse_handles(reference_raw)
     manual_handles = parse_handles(manual_raw)
 
-    # 2. Генерация — запрашиваем 3x, чтобы после проверки Telegram хватило
+    # 2а. Веб-поиск реальных каналов
     ask_count = channel_count * 3
-    with st.spinner(f"🤖 AI подбирает каналы (раунд 1 из 2)..."):
-        ai_handles = generate_channels(brief, ref_handles, client, ask_count)
+    with st.spinner("🔍 Ищу реальные каналы через DuckDuckGo..."):
+        web_handles = search_web_for_channels(brief, client, ask_count)
 
-    if not ai_handles:
-        st.error("AI не вернул список каналов. Попробуй переформулировать бриф.")
+    if web_handles:
+        st.info(f"🌐 Нашёл {len(web_handles)} каналов через веб-поиск")
+    else:
+        st.warning("Веб-поиск не дал результатов — использую только AI")
+
+    # 2б. AI генерация для пополнения
+    ai_supplement = max(ask_count - len(web_handles), channel_count * 2)
+    with st.spinner("🤖 AI подбирает дополнительные каналы..."):
+        ai_handles = generate_channels(brief, ref_handles, client, ai_supplement)
+
+    if not web_handles and not ai_handles:
+        st.error("Не удалось найти каналы. Попробуй переформулировать бриф.")
         st.stop()
 
-    all_handles = list(dict.fromkeys(ai_handles + ref_handles + manual_handles))
+    all_handles = list(dict.fromkeys(web_handles + ai_handles + ref_handles + manual_handles))
     tried = set(all_handles)
 
     # 3. Проверка раунд 1
@@ -807,8 +877,10 @@ if run:
     if len(enriched) < channel_count:
         still_need = (channel_count - len(enriched)) * 3
         stat.markdown(f'<div class="status-bar">🔄 Найдено {len(enriched)} из {channel_count} — запускаю раунд 2...</div>', unsafe_allow_html=True)
-        with st.spinner("🤖 AI подбирает ещё каналы (раунд 2 из 2)..."):
+        with st.spinner("🔍 Ищу ещё каналы (раунд 2)..."):
+            web_handles_2 = search_web_for_channels(brief, client, still_need)
             ai_handles_2 = generate_channels(brief, ref_handles, client, still_need, exclude=tried)
+            ai_handles_2 = web_handles_2 + [h for h in ai_handles_2 if h not in set(web_handles_2)]
         new_handles = [h for h in ai_handles_2 if h not in tried]
         tried.update(new_handles)
         if new_handles:
