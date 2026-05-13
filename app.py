@@ -13,6 +13,417 @@ load_dotenv()
 TG_API = "https://api.telegram.org/bot{token}/{method}"
 GROQ_MODEL = "llama-3.3-70b-versatile"
 
+st.set_page_config(
+    page_title="TG Channel Finder",
+    page_icon="📡",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+# ─── CSS ──────────────────────────────────────────────────────────────────────
+
+st.markdown("""
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+
+<style>
+/* ── Base ── */
+:root {
+    --bg:       #07071A;
+    --card:     #0D0D2B;
+    --card2:    #11113A;
+    --border:   #1E1E50;
+    --primary:  #7C3AED;
+    --primary2: #A855F7;
+    --gold:     #F59E0B;
+    --success:  #10B981;
+    --danger:   #EF4444;
+    --text:     #F0F0FF;
+    --muted:    #7070AA;
+    --mono:     'JetBrains Mono', monospace;
+}
+
+html, body, .stApp {
+    background: var(--bg) !important;
+    color: var(--text) !important;
+    font-family: 'Outfit', sans-serif !important;
+}
+
+#MainMenu, footer, header { visibility: hidden !important; }
+
+/* ── Sidebar ── */
+[data-testid="stSidebar"] {
+    background: #09091F !important;
+    border-right: 1px solid var(--border) !important;
+}
+[data-testid="stSidebar"] > div { padding-top: 1.5rem !important; }
+[data-testid="stSidebar"] label,
+[data-testid="stSidebar"] .stMarkdown p { color: #AAAACE !important; font-size: 0.82rem !important; }
+[data-testid="stSidebar"] h1,
+[data-testid="stSidebar"] h2,
+[data-testid="stSidebar"] h3 {
+    color: var(--primary2) !important;
+    font-family: 'Outfit', sans-serif !important;
+    font-weight: 600 !important;
+    font-size: 0.9rem !important;
+    letter-spacing: 0.12em !important;
+    text-transform: uppercase !important;
+}
+
+/* ── Inputs ── */
+.stTextInput input,
+.stTextArea textarea,
+.stNumberInput input {
+    background: #0A0A22 !important;
+    border: 1px solid var(--border) !important;
+    border-radius: 10px !important;
+    color: var(--text) !important;
+    font-family: 'Outfit', sans-serif !important;
+    font-size: 0.9rem !important;
+    transition: border-color 0.2s, box-shadow 0.2s !important;
+}
+.stTextInput input:focus,
+.stTextArea textarea:focus {
+    border-color: var(--primary) !important;
+    box-shadow: 0 0 0 3px rgba(124,58,237,0.18) !important;
+    outline: none !important;
+}
+.stTextInput input[type="password"] { letter-spacing: 0.1em !important; }
+
+/* ── Select ── */
+[data-baseweb="select"] > div,
+[data-baseweb="base-input"] > input {
+    background: #0A0A22 !important;
+    border-color: var(--border) !important;
+    color: var(--text) !important;
+    font-family: 'Outfit', sans-serif !important;
+}
+[data-baseweb="menu"] { background: #0F0F30 !important; }
+[data-baseweb="option"] { color: var(--text) !important; }
+[data-baseweb="option"]:hover { background: #1A1A50 !important; }
+
+/* ── Buttons ── */
+.stButton > button {
+    background: linear-gradient(135deg, var(--primary), #5B21B6) !important;
+    color: #fff !important;
+    border: none !important;
+    border-radius: 10px !important;
+    font-family: 'Outfit', sans-serif !important;
+    font-weight: 600 !important;
+    font-size: 0.88rem !important;
+    letter-spacing: 0.05em !important;
+    padding: 0.5rem 1.2rem !important;
+    transition: all 0.2s ease !important;
+    box-shadow: 0 4px 15px rgba(124,58,237,0.25) !important;
+}
+.stButton > button:hover {
+    transform: translateY(-2px) !important;
+    box-shadow: 0 8px 28px rgba(124,58,237,0.45) !important;
+}
+.stButton > button[kind="primary"] {
+    background: linear-gradient(135deg, var(--primary) 0%, #EC4899 100%) !important;
+    font-size: 1rem !important;
+    padding: 0.75rem 1.5rem !important;
+    letter-spacing: 0.12em !important;
+    text-transform: uppercase !important;
+    box-shadow: 0 4px 20px rgba(124,58,237,0.35) !important;
+}
+.stButton > button[kind="primary"]:hover {
+    box-shadow: 0 8px 35px rgba(168,85,247,0.55) !important;
+}
+
+/* Download buttons */
+.stDownloadButton > button {
+    background: #0F0F30 !important;
+    border: 1px solid var(--border) !important;
+    color: var(--primary2) !important;
+    border-radius: 10px !important;
+    font-family: 'Outfit', sans-serif !important;
+    font-weight: 600 !important;
+    letter-spacing: 0.05em !important;
+    transition: all 0.2s !important;
+}
+.stDownloadButton > button:hover {
+    background: #1A1A48 !important;
+    border-color: var(--primary) !important;
+    box-shadow: 0 4px 16px rgba(124,58,237,0.2) !important;
+    transform: translateY(-1px) !important;
+}
+
+/* ── Tabs ── */
+.stTabs [data-baseweb="tab-list"] {
+    background: #0A0A22 !important;
+    border-radius: 12px !important;
+    padding: 4px !important;
+    gap: 4px !important;
+    border: 1px solid var(--border) !important;
+}
+.stTabs [data-baseweb="tab"] {
+    background: transparent !important;
+    color: var(--muted) !important;
+    border-radius: 8px !important;
+    font-family: 'Outfit', sans-serif !important;
+    font-weight: 500 !important;
+    font-size: 0.85rem !important;
+    letter-spacing: 0.03em !important;
+    padding: 6px 18px !important;
+    transition: all 0.2s !important;
+}
+.stTabs [aria-selected="true"] {
+    background: linear-gradient(135deg, var(--primary), var(--primary2)) !important;
+    color: #fff !important;
+}
+
+/* ── Progress ── */
+.stProgress > div > div > div > div {
+    background: linear-gradient(90deg, var(--primary), #EC4899, var(--gold)) !important;
+    border-radius: 100px !important;
+    animation: pulse-bar 2s ease infinite !important;
+}
+@keyframes pulse-bar {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.85; }
+}
+.stProgress > div > div {
+    background: #1A1A40 !important;
+    border-radius: 100px !important;
+}
+
+/* ── Slider ── */
+[data-baseweb="slider"] [role="slider"] {
+    background: var(--primary) !important;
+    border-color: var(--primary2) !important;
+    box-shadow: 0 0 10px rgba(124,58,237,0.5) !important;
+}
+[data-baseweb="slider"] div[class*="Track"] > div {
+    background: linear-gradient(90deg, var(--primary), var(--primary2)) !important;
+}
+
+/* ── Metrics ── */
+[data-testid="metric-container"] {
+    background: var(--card) !important;
+    border: 1px solid var(--border) !important;
+    border-radius: 14px !important;
+    padding: 1.1rem 1.2rem !important;
+    transition: border-color 0.2s !important;
+}
+[data-testid="metric-container"]:hover { border-color: var(--primary) !important; }
+[data-testid="stMetricLabel"] { color: var(--muted) !important; font-size: 0.75rem !important; text-transform: uppercase !important; letter-spacing: 0.1em !important; }
+[data-testid="stMetricValue"] { color: var(--primary2) !important; font-family: 'Outfit', sans-serif !important; font-weight: 700 !important; font-size: 1.15rem !important; }
+
+/* ── Expanders ── */
+details {
+    background: var(--card) !important;
+    border: 1px solid var(--border) !important;
+    border-radius: 12px !important;
+    overflow: hidden !important;
+    margin-bottom: 0.5rem !important;
+}
+details summary {
+    color: var(--text) !important;
+    font-family: 'Outfit', sans-serif !important;
+    font-weight: 600 !important;
+    padding: 0.9rem 1.1rem !important;
+    cursor: pointer !important;
+    font-size: 0.9rem !important;
+    letter-spacing: 0.02em !important;
+}
+details summary:hover { background: #111130 !important; }
+details[open] summary { border-bottom: 1px solid var(--border) !important; }
+details > div { padding: 1rem 1.1rem !important; }
+
+/* ── Dataframe ── */
+.stDataFrame {
+    border: 1px solid var(--border) !important;
+    border-radius: 14px !important;
+    overflow: hidden !important;
+}
+.stDataFrame iframe { border-radius: 14px !important; }
+
+/* ── Alerts ── */
+[data-testid="stAlert"] {
+    border-radius: 12px !important;
+    border-left-width: 4px !important;
+    font-family: 'Outfit', sans-serif !important;
+}
+
+/* ── File uploader ── */
+[data-testid="stFileUploader"] {
+    background: #0A0A22 !important;
+    border: 1.5px dashed var(--border) !important;
+    border-radius: 12px !important;
+    transition: border-color 0.2s !important;
+}
+[data-testid="stFileUploader"]:hover { border-color: var(--primary) !important; }
+
+/* ── Divider ── */
+hr { border-color: var(--border) !important; margin: 1.5rem 0 !important; }
+
+/* ── Spinner ── */
+[data-testid="stSpinner"] > div { border-top-color: var(--primary) !important; }
+
+/* ── Caption ── */
+.stCaption { color: var(--muted) !important; font-size: 0.78rem !important; }
+
+/* ── Custom cards ── */
+.card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 1.4rem 1.6rem;
+    margin-bottom: 1rem;
+    transition: border-color 0.2s, box-shadow 0.2s;
+}
+.card:hover {
+    border-color: var(--primary);
+    box-shadow: 0 0 25px rgba(124,58,237,0.1);
+}
+.card-label {
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--primary2);
+    margin-bottom: 0.6rem;
+}
+
+/* ── Hero ── */
+.hero {
+    padding: 2rem 0 1.8rem;
+    margin-bottom: 0.5rem;
+}
+.hero-badge {
+    display: inline-block;
+    background: linear-gradient(135deg, rgba(124,58,237,0.2), rgba(168,85,247,0.1));
+    border: 1px solid rgba(124,58,237,0.4);
+    border-radius: 100px;
+    padding: 4px 14px;
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--primary2);
+    margin-bottom: 1rem;
+}
+.hero-title {
+    font-family: 'Anton', sans-serif;
+    font-size: clamp(2.8rem, 5vw, 4.2rem);
+    line-height: 0.95;
+    letter-spacing: 0.04em;
+    margin: 0 0 0.8rem 0;
+    background: linear-gradient(135deg, #fff 0%, var(--primary2) 50%, var(--gold) 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+.hero-title em {
+    font-style: normal;
+    -webkit-text-fill-color: var(--gold);
+    color: var(--gold);
+}
+.hero-sub {
+    font-size: 0.95rem;
+    color: var(--muted);
+    font-weight: 400;
+    margin: 0;
+    letter-spacing: 0.01em;
+}
+.hero-chips {
+    display: flex;
+    gap: 0.6rem;
+    flex-wrap: wrap;
+    margin-top: 1rem;
+}
+.chip {
+    background: #0F0F30;
+    border: 1px solid var(--border);
+    border-radius: 100px;
+    padding: 3px 12px;
+    font-size: 0.72rem;
+    color: var(--muted);
+    letter-spacing: 0.05em;
+}
+
+/* ── Section headers ── */
+.section-title {
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 0.8rem;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.section-title::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+}
+
+/* ── Brief analysis box ── */
+.brief-box {
+    background: linear-gradient(135deg, rgba(124,58,237,0.08), rgba(168,85,247,0.04));
+    border: 1px solid rgba(124,58,237,0.3);
+    border-radius: 16px;
+    padding: 1.3rem 1.5rem;
+    margin: 1rem 0;
+}
+.brief-box h4 {
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--primary2);
+    margin: 0 0 0.8rem 0;
+}
+.brief-row { display: flex; gap: 1.5rem; flex-wrap: wrap; margin-bottom: 0.6rem; }
+.brief-item { }
+.brief-key { font-size: 0.7rem; color: var(--muted); letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 2px; }
+.brief-val { font-size: 0.95rem; color: var(--text); font-weight: 600; }
+
+/* ── Status bar ── */
+.status-bar {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 0.7rem 1rem;
+    font-family: var(--mono);
+    font-size: 0.8rem;
+    color: var(--success);
+    margin: 0.5rem 0;
+    letter-spacing: 0.03em;
+}
+
+/* ── Results header ── */
+.results-header {
+    display: flex;
+    align-items: baseline;
+    gap: 1rem;
+    margin-bottom: 1rem;
+}
+.results-count {
+    font-family: 'Anton', sans-serif;
+    font-size: 2.5rem;
+    letter-spacing: 0.04em;
+    color: var(--gold);
+    line-height: 1;
+}
+.results-label {
+    font-size: 0.85rem;
+    color: var(--muted);
+    font-weight: 500;
+}
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: #2A2A60; border-radius: 100px; }
+::-webkit-scrollbar-thumb:hover { background: var(--primary); }
+</style>
+""", unsafe_allow_html=True)
+
 
 # ─── Groq AI ──────────────────────────────────────────────────────────────────
 
@@ -21,7 +432,6 @@ def get_client(api_key: str) -> Groq:
 
 
 def ask_json(client: Groq, prompt: str):
-    """Ask Groq and return parsed JSON. Raises on failure."""
     response = client.chat.completions.create(
         model=GROQ_MODEL,
         messages=[{"role": "user", "content": prompt}],
@@ -108,7 +518,7 @@ def score_channels(channels: list, brief: dict, client: Groq) -> list:
 Каналы:
 {json.dumps(summaries, ensure_ascii=False)}
 
-Верни JSON объект с массивом оценок (0-100) для каждого канала:
+Верни JSON объект с массивом оценок (0-100):
 {{"scores": [{{"username": "...", "score": 85, "reason": "почему подходит или нет"}}, ...]}}"""
 
     try:
@@ -166,7 +576,7 @@ def enrich_channels(bot_token: str, usernames: list, prog, stat) -> list:
     results = []
     total = len(usernames)
     for i, uname in enumerate(usernames):
-        stat.text(f"📡 Проверяю @{uname} ({i+1}/{total})...")
+        stat.markdown(f'<div class="status-bar">📡 Проверяю @{uname} &nbsp;·&nbsp; {i+1} / {total}</div>', unsafe_allow_html=True)
         info = tg_get_chat(bot_token, uname)
         if info and info.get("type") in ("channel", "supergroup"):
             count = tg_get_member_count(bot_token, uname)
@@ -200,6 +610,24 @@ def parse_handles(raw: str) -> list:
     return out
 
 
+def fmt_subs(n: int) -> str:
+    if n >= 1_000_000:
+        return f"{n/1_000_000:.1f}М"
+    if n >= 1_000:
+        return f"{n/1_000:.0f}К"
+    return str(n)
+
+
+def score_color(score: int) -> str:
+    if score >= 80:
+        return "#10B981"
+    if score >= 60:
+        return "#F59E0B"
+    if score >= 40:
+        return "#F97316"
+    return "#EF4444"
+
+
 def to_df(channels: list) -> pd.DataFrame:
     rows = []
     for ch in channels:
@@ -216,71 +644,101 @@ def to_df(channels: list) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-# ─── UI ───────────────────────────────────────────────────────────────────────
-
-st.set_page_config(page_title="TG Channel Finder", page_icon="📡", layout="wide")
-
-st.title("📡 Telegram Channel Finder")
-
 def get_secret(key: str) -> str:
     try:
         return st.secrets[key]
     except Exception:
         return os.getenv(key, "")
 
+
+# ─── SIDEBAR ──────────────────────────────────────────────────────────────────
+
 with st.sidebar:
-    st.header("🔧 Параметры")
+    st.markdown("### 🔧 Параметры")
     channel_count = st.slider("Каналов для подбора", 20, 100, 50)
     max_subs = st.number_input("Макс. подписчики (0 = без лимита)", min_value=0, value=0, step=10000)
-    min_subs = 1000  # Telegram Ads: минимум 1000 подписчиков
+    min_subs = 1000
 
-    # Ключи — только для локальной разработки, на сервере берутся из secrets
     groq_key = get_secret("GROQ_API_KEY")
     bot_token = get_secret("TELEGRAM_BOT_TOKEN")
+
     if not groq_key or not bot_token:
         st.divider()
-        st.caption("⚙️ Локальная разработка")
+        st.markdown("### ⚙️ Ключи API")
         if not groq_key:
-            groq_key = st.text_input("Groq API Key", type="password",
-                                     help="console.groq.com (бесплатно)")
+            groq_key = st.text_input("Groq API Key", type="password", help="console.groq.com — бесплатно")
         if not bot_token:
             bot_token = st.text_input("Telegram Bot Token", type="password")
 
-col1, col2 = st.columns([1, 1], gap="large")
+    st.divider()
+    st.markdown('<p style="font-size:0.7rem;color:#44446A;letter-spacing:0.1em;text-align:center;text-transform:uppercase;">TG Channel Finder · AI Media Planning</p>', unsafe_allow_html=True)
+
+
+# ─── HERO ─────────────────────────────────────────────────────────────────────
+
+st.markdown("""
+<div class="hero">
+    <div class="hero-badge">⚡ AI · POWERED · MEDIA PLANNING</div>
+    <h1 class="hero-title">TG CHANNEL<br>FINDER</h1>
+    <p class="hero-sub">Загрузи бриф → AI подберёт каналы → получи медиаплан</p>
+    <div class="hero-chips">
+        <span class="chip">🤖 Groq Llama 3.3</span>
+        <span class="chip">📡 Telegram API</span>
+        <span class="chip">📊 AI-скоринг</span>
+        <span class="chip">📥 CSV / Excel</span>
+    </div>
+</div>
+""", unsafe_allow_html=True)
+
+# ─── INPUT AREA ───────────────────────────────────────────────────────────────
+
+col1, col2 = st.columns([3, 2], gap="large")
 brief_text = ""
 
 with col1:
-    st.subheader("📋 Бриф проекта")
-    tab_text, tab_pdf = st.tabs(["Текст", "PDF"])
+    st.markdown('<div class="section-title">📋 Бриф проекта</div>', unsafe_allow_html=True)
+    tab_text, tab_pdf = st.tabs(["✏️  Текст", "📄  PDF"])
     with tab_text:
-        brief_text = st.text_area("Вставь текст брифа", height=220,
-            placeholder="Продукт, целевая аудитория, цели рекламы, гео...")
+        brief_text = st.text_area(
+            "brief",
+            height=200,
+            placeholder="Опиши продукт и целевую аудиторию...\n\nНапример: онлайн-курс по инвестициям. ЦА — мужчины 25-40 лет, хотят научиться вкладывать деньги. Гео: Россия.",
+            label_visibility="collapsed",
+        )
     with tab_pdf:
-        pdf_file = st.file_uploader("Загрузи PDF", type=["pdf"])
+        pdf_file = st.file_uploader("pdf", type=["pdf"], label_visibility="collapsed")
         if pdf_file:
             extracted = extract_pdf_text(pdf_file)
             if extracted:
                 brief_text = extracted
-                st.success(f"Прочитано {len(extracted)} символов")
+                st.success(f"Прочитано {len(extracted):,} символов из PDF")
 
 with col2:
-    st.subheader("🎯 Каналы-ориентиры (необязательно)")
-    reference_raw = st.text_area("Конкуренты или каналы где реклама работала",
-        height=120, placeholder="@channel1\n@channel2")
-    st.subheader("➕ Свои каналы (необязательно)")
-    manual_raw = st.text_area("Добавить вручную", height=80, placeholder="@mychannel")
+    st.markdown('<div class="section-title">🎯 Ориентиры</div>', unsafe_allow_html=True)
+    reference_raw = st.text_area(
+        "ref",
+        height=100,
+        placeholder="Каналы конкурентов или где реклама уже работала:\n@channel1\n@channel2",
+        label_visibility="collapsed",
+    )
+    st.markdown('<div class="section-title" style="margin-top:0.8rem">➕ Свои каналы</div>', unsafe_allow_html=True)
+    manual_raw = st.text_area(
+        "manual",
+        height=70,
+        placeholder="@mychannel",
+        label_visibility="collapsed",
+    )
 
 st.divider()
-run = st.button("🔍 Найти каналы", type="primary", use_container_width=True)
+run = st.button("⚡  НАЙТИ КАНАЛЫ", type="primary", use_container_width=True)
+
+# ─── SEARCH FLOW ──────────────────────────────────────────────────────────────
 
 if run:
     errors = []
-    if not groq_key:
-        errors.append("Нет Groq API Key")
-    if not bot_token:
-        errors.append("Нет Telegram Bot Token")
-    if not brief_text:
-        errors.append("Введи бриф")
+    if not groq_key:    errors.append("Нет Groq API Key — добавь в боковой панели")
+    if not bot_token:   errors.append("Нет Telegram Bot Token")
+    if not brief_text:  errors.append("Введи бриф проекта")
     for e in errors:
         st.error(e)
     if errors:
@@ -289,39 +747,46 @@ if run:
     client = get_client(groq_key)
 
     # 1. Анализ брифа
-    with st.spinner("🤖 Анализирую бриф..."):
+    with st.spinner("Анализирую бриф..."):
         brief = analyze_brief(brief_text, client)
 
     if not brief:
         st.error("Не удалось проанализировать бриф. Проверь Groq API Key.")
         st.stop()
 
-    with st.expander("📊 Как AI понял бриф", expanded=True):
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Продукт", brief.get("product", "—"))
-        c2.metric("Ниша", brief.get("niche", "—"))
-        c3.metric("Гео", brief.get("geo", "—"))
-        st.write("**ЦА:**", brief.get("target_audience", "—"))
-        st.write("**Пол / Возраст:**", brief.get("gender", "—"), "/", brief.get("age_range", "—"))
+    st.markdown(f"""
+    <div class="brief-box">
+        <h4>📊 AI понял бриф так</h4>
+        <div class="brief-row">
+            <div class="brief-item"><div class="brief-key">Продукт</div><div class="brief-val">{brief.get("product","—")}</div></div>
+            <div class="brief-item"><div class="brief-key">Ниша</div><div class="brief-val">{brief.get("niche","—")}</div></div>
+            <div class="brief-item"><div class="brief-key">Гео</div><div class="brief-val">{brief.get("geo","—")}</div></div>
+            <div class="brief-item"><div class="brief-key">Пол</div><div class="brief-val">{brief.get("gender","—")}</div></div>
+            <div class="brief-item"><div class="brief-key">Возраст</div><div class="brief-val">{brief.get("age_range","—")}</div></div>
+        </div>
+        <div class="brief-item"><div class="brief-key">Целевая аудитория</div><div class="brief-val" style="font-weight:400;font-size:0.9rem;color:#AAAACE">{brief.get("target_audience","—")}</div></div>
+    </div>
+    """, unsafe_allow_html=True)
 
     ref_handles = parse_handles(reference_raw)
     manual_handles = parse_handles(manual_raw)
 
     # 2. Генерация каналов
-    with st.spinner(f"🤖 AI подбирает {channel_count} каналов..."):
+    with st.spinner(f"Подбираю {channel_count} каналов..."):
         ai_handles = generate_channels(brief, ref_handles, client, channel_count)
 
     if not ai_handles:
         st.error("AI не вернул список каналов. Попробуй переформулировать бриф.")
         st.stop()
 
-    with st.expander(f"👀 Что предложил AI — {len(ai_handles)} каналов"):
-        st.write(", ".join(f"@{h}" for h in ai_handles))
+    with st.expander(f"👀 AI предложил {len(ai_handles)} каналов — раскрыть список"):
+        handles_text = "  ·  ".join(f"`@{h}`" for h in ai_handles)
+        st.markdown(f'<p style="font-family:var(--mono);font-size:0.78rem;color:#7070AA;line-height:2">{handles_text}</p>', unsafe_allow_html=True)
 
     all_handles = list(dict.fromkeys(ai_handles + ref_handles + manual_handles))
 
     # 3. Проверка через Telegram
-    st.write(f"**Проверяю {len(all_handles)} каналов через Telegram...**")
+    st.markdown(f'<div class="section-title" style="margin-top:1rem">📡 Проверка через Telegram — {len(all_handles)} каналов</div>', unsafe_allow_html=True)
     prog = st.progress(0)
     stat = st.empty()
     enriched = enrich_channels(bot_token, all_handles, prog, stat)
@@ -330,39 +795,45 @@ if run:
 
     found = len(enriched)
     not_found = len(all_handles) - found
+
     if found == 0:
-        st.error("Ни один канал не прошёл проверку Telegram. Возможно каналы приватные или бот заблокирован.")
+        st.error("Ни один канал не прошёл проверку. Возможно, каналы приватные.")
         st.stop()
 
-    st.success(f"Найдено: **{found}** каналов" + (f" | не найдено/приватных: {not_found}" if not_found else ""))
+    st.success(f"✅ Найдено **{found}** каналов" + (f"  ·  не найдено: {not_found}" if not_found else ""))
 
     # 4. Фильтры
-    filtered_channels = enriched
-    if min_subs > 0:
-        filtered_channels = [c for c in filtered_channels if c.get("subscribers", 0) >= min_subs]
+    filtered_channels = [c for c in enriched if c.get("subscribers", 0) >= min_subs]
     if max_subs > 0:
         filtered_channels = [c for c in filtered_channels if c.get("subscribers", 0) <= max_subs]
 
     if not filtered_channels:
-        st.warning("После фильтрации ничего не осталось — убери ограничения по подписчикам.")
+        st.warning("После фильтрации ничего не осталось.")
         st.stop()
 
     # 5. Скоринг
-    with st.spinner(f"🤖 Оцениваю {len(filtered_channels)} каналов..."):
+    with st.spinner(f"AI оценивает {len(filtered_channels)} каналов..."):
         scored = score_channels(filtered_channels, brief, client)
 
     st.session_state["scored"] = scored
     st.session_state["brief"] = brief
 
-# ── Результаты ──
+# ─── RESULTS ──────────────────────────────────────────────────────────────────
+
 if "scored" in st.session_state:
     scored = st.session_state["scored"]
 
-    st.subheader(f"✅ Результаты — {len(scored)} каналов")
+    st.divider()
+    st.markdown(f"""
+    <div class="results-header">
+        <span class="results-count">{len(scored)}</span>
+        <span class="results-label">каналов найдено и оценено</span>
+    </div>
+    """, unsafe_allow_html=True)
 
-    rf1, rf2 = st.columns(2)
+    rf1, rf2 = st.columns([2, 1])
     with rf1:
-        min_score_f = st.slider("Мин. оценка AI", 0, 100, 30, key="score_f")
+        min_score_f = st.slider("Минимальная оценка AI", 0, 100, 30, key="score_f")
     with rf2:
         sort_by = st.selectbox("Сортировка", ["Оценка AI", "Подписчики"], key="sort_f")
 
@@ -374,24 +845,34 @@ if "scored" in st.session_state:
     st.dataframe(
         result,
         use_container_width=True,
-        height=520,
+        height=500,
         column_config={
-            "Оценка": st.column_config.ProgressColumn("Оценка AI", min_value=0, max_value=100, format="%d"),
+            "Оценка": st.column_config.ProgressColumn(
+                "Оценка AI", min_value=0, max_value=100, format="%d"
+            ),
             "Подписчики": st.column_config.NumberColumn("Подписчики", format="%d"),
             "Ссылка": st.column_config.LinkColumn("Открыть"),
         },
         hide_index=True,
     )
-    st.caption(f"Показано {len(result)} из {len(df)}")
+
+    st.caption(f"Показано {len(result)} из {len(df)} · мин. 1 000 подписчиков (требование Telegram Ads)")
 
     e1, e2 = st.columns(2)
     with e1:
-        st.download_button("📥 CSV", result.to_csv(index=False).encode("utf-8-sig"),
-                           "tg_channels.csv", "text/csv", use_container_width=True)
+        st.download_button(
+            "📥 Скачать CSV",
+            result.to_csv(index=False).encode("utf-8-sig"),
+            "tg_channels.csv", "text/csv",
+            use_container_width=True,
+        )
     with e2:
         buf = BytesIO()
         with pd.ExcelWriter(buf, engine="openpyxl") as writer:
             result.to_excel(writer, index=False, sheet_name="Каналы")
-        st.download_button("📥 Excel", buf.getvalue(), "tg_channels.xlsx",
+        st.download_button(
+            "📥 Скачать Excel",
+            buf.getvalue(), "tg_channels.xlsx",
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True)
+            use_container_width=True,
+        )
