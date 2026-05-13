@@ -463,23 +463,35 @@ def analyze_brief(brief_text: str, client: Groq) -> dict:
         return {}
 
 
-def generate_channels(brief: dict, reference_channels: list, client: Groq, count: int) -> list:
+def generate_channels(brief: dict, reference_channels: list, client: Groq, count: int, exclude: set = None) -> list:
+    """Запрашиваем count каналов у AI. exclude — уже проверенные username-ы."""
+    if exclude is None:
+        exclude = set()
+
     ref_block = ""
     if reference_channels:
         ref_block = f"Каналы-ориентиры: {', '.join(reference_channels)}. Подбери похожие по аудитории.\n"
 
-    prompt = f"""Ты медиабайер в Telegram. Подбери русскоязычные Telegram-каналы для рекламы.
+    exclude_block = ""
+    if exclude:
+        sample = list(exclude)[:30]
+        exclude_block = f"НЕ включай эти каналы — они уже проверены: {', '.join(sample)}\n"
+
+    prompt = f"""Ты опытный медиабайер в Telegram. Подбери русскоязычные Telegram-каналы для рекламы.
 
 Продукт: {brief.get("product", "")}
 Ниша: {brief.get("niche", "")}
 Целевая аудитория: {brief.get("target_audience", "")}
 Пол: {brief.get("gender", "все")}
 Возраст: {brief.get("age_range", "")}
-{ref_block}
-Требования:
-- Только реально существующие публичные русскоязычные Telegram-каналы с username
-- Аудитория соответствует описанию
-- Разный охват: крупные (500к+), средние (50-500к), нишевые (10-50к)
+{ref_block}{exclude_block}
+ВАЖНО — требования к каналам:
+- Только ПУБЛИЧНЫЕ русскоязычные Telegram-каналы с реальным username
+- Каналы должны быть ПОПУЛЯРНЫМИ и СУЩЕСТВУЮЩИМИ прямо сейчас (2024-2025)
+- Приоритет: каналы с аудиторией от 5 000 подписчиков
+- Тематика строго соответствует ЦА
+- Разный охват: крупные (500к+), средние (50-500к), нишевые (5-50к)
+- НЕ придумывай username — указывай только те каналы, в существовании которых уверен
 
 Верни JSON объект с массивом из {count} username-ов (без @):
 {{"channels": ["username1", "username2", ...]}}"""
@@ -488,7 +500,7 @@ def generate_channels(brief: dict, reference_channels: list, client: Groq, count
         result = ask_json(client, prompt)
         items = result.get("channels", result) if isinstance(result, dict) else result
         if isinstance(items, list):
-            return [str(u).lstrip("@").strip() for u in items if u]
+            return [str(u).lstrip("@").strip() for u in items if u and str(u).lstrip("@").strip() not in exclude]
         return []
     except Exception as e:
         st.error(f"Ошибка генерации каналов: {e}")
@@ -576,7 +588,7 @@ def enrich_channels(bot_token: str, usernames: list, prog, stat) -> list:
     results = []
     total = len(usernames)
     for i, uname in enumerate(usernames):
-        stat.markdown(f'<div class="status-bar">📡 Проверяю @{uname} &nbsp;·&nbsp; {i+1} / {total}</div>', unsafe_allow_html=True)
+        stat.markdown(f'<div class="status-bar">📡 Проверяю @{uname} &nbsp;·&nbsp; {i+1} / {total} &nbsp;·&nbsp; найдено: {len(results)}</div>', unsafe_allow_html=True)
         info = tg_get_chat(bot_token, uname)
         if info and info.get("type") in ("channel", "supergroup"):
             count = tg_get_member_count(bot_token, uname)
@@ -586,7 +598,7 @@ def enrich_channels(bot_token: str, usernames: list, prog, stat) -> list:
                 "description": info.get("description", ""),
                 "subscribers": count,
             })
-        time.sleep(0.15)
+        time.sleep(0.05)
         prog.progress((i + 1) / total)
     return results
 
@@ -771,21 +783,19 @@ if run:
     ref_handles = parse_handles(reference_raw)
     manual_handles = parse_handles(manual_raw)
 
-    # 2. Генерация каналов
-    with st.spinner(f"Подбираю {channel_count} каналов..."):
-        ai_handles = generate_channels(brief, ref_handles, client, channel_count)
+    # 2. Генерация — запрашиваем 3x, чтобы после проверки Telegram хватило
+    ask_count = channel_count * 3
+    with st.spinner(f"🤖 AI подбирает каналы (раунд 1 из 2)..."):
+        ai_handles = generate_channels(brief, ref_handles, client, ask_count)
 
     if not ai_handles:
         st.error("AI не вернул список каналов. Попробуй переформулировать бриф.")
         st.stop()
 
-    with st.expander(f"👀 AI предложил {len(ai_handles)} каналов — раскрыть список"):
-        handles_text = "  ·  ".join(f"`@{h}`" for h in ai_handles)
-        st.markdown(f'<p style="font-family:var(--mono);font-size:0.78rem;color:#7070AA;line-height:2">{handles_text}</p>', unsafe_allow_html=True)
-
     all_handles = list(dict.fromkeys(ai_handles + ref_handles + manual_handles))
+    tried = set(all_handles)
 
-    # 3. Проверка через Telegram
+    # 3. Проверка раунд 1
     st.markdown(f'<div class="section-title" style="margin-top:1rem">📡 Проверка через Telegram — {len(all_handles)} каналов</div>', unsafe_allow_html=True)
     prog = st.progress(0)
     stat = st.empty()
@@ -793,14 +803,36 @@ if run:
     stat.empty()
     prog.empty()
 
+    # Если нашли меньше нужного — второй раунд
+    if len(enriched) < channel_count:
+        still_need = (channel_count - len(enriched)) * 3
+        stat.markdown(f'<div class="status-bar">🔄 Найдено {len(enriched)} из {channel_count} — запускаю раунд 2...</div>', unsafe_allow_html=True)
+        with st.spinner("🤖 AI подбирает ещё каналы (раунд 2 из 2)..."):
+            ai_handles_2 = generate_channels(brief, ref_handles, client, still_need, exclude=tried)
+        new_handles = [h for h in ai_handles_2 if h not in tried]
+        tried.update(new_handles)
+        if new_handles:
+            st.markdown(f'<div class="section-title" style="margin-top:0.5rem">📡 Проверка раунд 2 — {len(new_handles)} каналов</div>', unsafe_allow_html=True)
+            prog2 = st.progress(0)
+            stat2 = st.empty()
+            enriched2 = enrich_channels(bot_token, new_handles, prog2, stat2)
+            stat2.empty()
+            prog2.empty()
+            enriched = enriched + enriched2
+        stat.empty()
+
     found = len(enriched)
-    not_found = len(all_handles) - found
+    not_found = len(tried) - found
 
     if found == 0:
         st.error("Ни один канал не прошёл проверку. Возможно, каналы приватные.")
         st.stop()
 
-    st.success(f"✅ Найдено **{found}** каналов" + (f"  ·  не найдено: {not_found}" if not_found else ""))
+    st.success(f"✅ Найдено **{found}** каналов" + (f"  ·  не прошли проверку: {not_found}" if not_found else ""))
+
+    with st.expander(f"👀 Все найденные каналы — {found} штук"):
+        handles_text = "  ·  ".join(f"`@{c['username']}`" for c in enriched)
+        st.markdown(f'<p style="font-family:var(--mono);font-size:0.78rem;color:#7070AA;line-height:2">{handles_text}</p>', unsafe_allow_html=True)
 
     # 4. Фильтры
     filtered_channels = [c for c in enriched if c.get("subscribers", 0) >= min_subs]
@@ -812,7 +844,7 @@ if run:
         st.stop()
 
     # 5. Скоринг
-    with st.spinner(f"AI оценивает {len(filtered_channels)} каналов..."):
+    with st.spinner(f"🤖 AI оценивает {len(filtered_channels)} каналов..."):
         scored = score_channels(filtered_channels, brief, client)
 
     st.session_state["scored"] = scored
