@@ -886,30 +886,15 @@ def to_df(channels: list) -> pd.DataFrame:
 
 
 def get_secret(key: str) -> str:
-    """Try multiple key name variants to handle different naming conventions."""
-    variants = [
-        key,
-        key.lower(),
-        key.upper(),
-        key.replace("_API_KEY", "").replace("_KEY", ""),
-        key.replace("_API_KEY", "_KEY"),
-    ]
-    for k in variants:
+    # st.secrets uses __getitem__, not .get() — must use try/except
+    for k in [key, key.lower(), key.upper()]:
         try:
-            val = st.secrets.get(k)
+            val = st.secrets[k]
             if val:
                 return str(val)
         except Exception:
             pass
-    # Also try iterating all secrets to find case-insensitive match
-    try:
-        for k, v in st.secrets.items():
-            if k.upper() == key.upper() and v:
-                return str(v)
-    except Exception:
-        pass
-    # Fall back to environment variables
-    for k in variants:
+    for k in [key, key.lower(), key.upper()]:
         val = os.getenv(k, "")
         if val:
             return val
