@@ -568,7 +568,7 @@ def search_duckduckgo(query: str) -> list:
 
 
 
-def telemetr_get_channel_id(api_key: str, username: str) -> str | None:
+def telemetr_get_channel_id(api_key: str, username: str):
     """Получить internal_id канала по username через Telemetr."""
     try:
         resp = httpx.get(
