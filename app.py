@@ -540,7 +540,8 @@ def search_via_mtproto(session: str, keywords: list) -> list:
     loop = asyncio.new_event_loop()
     try:
         return loop.run_until_complete(_run())
-    except Exception:
+    except Exception as e:
+        st.warning(f"MTProto ошибка: {e}")
         return []
     finally:
         loop.close()
@@ -568,6 +569,7 @@ def generate_channels(brief: dict, reference_channels: list, client: Groq, count
     """Запрашиваем count каналов у AI. exclude — уже проверенные username-ы."""
     if exclude is None:
         exclude = set()
+    count = min(count, 40)  # Groq JSON mode не осиливает больше 40 за раз
 
     ref_block = ""
     if reference_channels:
@@ -904,10 +906,18 @@ if run:
     else:
         st.caption("Сессия Telegram не настроена — использую AI генерацию")
 
-    # 2б. AI генерация для пополнения
-    ai_supplement = max(ask_count - len(mtproto_handles), channel_count * 2)
-    with st.spinner("🤖 AI подбирает дополнительные каналы..."):
-        ai_handles = generate_channels(brief, ref_handles, client, ai_supplement)
+    # 2б. AI генерация батчами по 40 (Groq не осиливает больше за раз)
+    ai_needed = max(channel_count * 2 - len(mtproto_handles), channel_count)
+    batches = max(1, min((ai_needed + 39) // 40, 4))
+    ai_handles = []
+    exclude_ai = set(mtproto_handles + ref_handles + manual_handles)
+    for i in range(batches):
+        with st.spinner(f"🤖 AI подбирает каналы (партия {i+1} из {batches})..."):
+            batch = generate_channels(brief, ref_handles, client, 40,
+                                      exclude=exclude_ai | set(ai_handles))
+            ai_handles.extend(batch)
+        if len(ai_handles) >= ai_needed:
+            break
 
     if not mtproto_handles and not ai_handles:
         st.error("Не удалось найти каналы. Попробуй переформулировать бриф.")
