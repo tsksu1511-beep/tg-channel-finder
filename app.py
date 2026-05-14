@@ -468,10 +468,11 @@ def get_client(api_key: str) -> Groq:
     return Groq(api_key=api_key)
 
 
-def ask_json(client: Groq, prompt: str):
+def ask_json(client: Groq, prompt: str, max_tokens: int = 4096) -> dict:
     response = client.chat.completions.create(
         model=GROQ_MODEL,
         messages=[{"role": "user", "content": prompt}],
+        max_tokens=max_tokens,
         response_format={"type": "json_object"},
         temperature=0.3,
     )
@@ -482,7 +483,7 @@ def analyze_brief(brief_text: str, client: Groq) -> dict:
     prompt = f"""Проанализируй рекламный бриф для Telegram-рекламы.
 
 Бриф:
-{brief_text}
+{brief_text[:3000]}
 
 Верни JSON:
 {{
@@ -500,52 +501,81 @@ def analyze_brief(brief_text: str, client: Groq) -> dict:
         return {}
 
 
+_KW_STOPWORDS = {
+    "лет", "года", "году", "рублей", "рубль", "рублях", "доход", "доходом",
+    "месяц", "месяца", "месяцев", "более", "менее", "выше", "ниже",
+    "среднего", "среднем", "тысяч", "миллион", "человек", "людей",
+    "который", "которая", "которые", "также", "этого", "этой", "этот",
+    "своей", "своего", "своих", "будет", "после", "перед", "между",
+    "russia", "женщин", "мужчин", "россия", "россию", "российских",
+}
+
+def _clean_kws(kws: list) -> list:
+    """Оставляет только слова пригодные для поиска каналов в Telemetr."""
+    result = []
+    for kw in kws:
+        kw = kw.strip().lower()
+        words = kw.split()
+        if not words or len(words) > 2:
+            continue
+        # отбрасываем слова с цифрами или дефисом+цифра
+        if any(c.isdigit() for c in kw):
+            continue
+        # отбрасываем стоп-слова
+        if all(w in _KW_STOPWORDS for w in words):
+            continue
+        # минимум 4 буквы в каждом слове
+        if any(len(w) < 4 for w in words):
+            continue
+        # отбрасываем слова в косвенных падежах с нехарактерными окончаниями
+        if kw.endswith(("ью", "ови", "ями", "ами", "ого", "его", "ому", "ему")):
+            continue
+        if kw not in result:
+            result.append(kw)
+    return result
+
+
 def extract_keywords(brief: dict, client: Groq, ref_channels_info: list = None) -> list:
     ref_block = ""
     if ref_channels_info:
-        lines = []
-        for ch in ref_channels_info[:5]:
-            lines.append(f"- @{ch['username']}: «{ch['title']}» — {ch['description'][:120]}")
-        ref_block = f"""
-Вот каналы-ориентиры, где уже есть нужная аудитория. Проанализируй их темы и тональность:
-{chr(10).join(lines)}
+        lines = [f"- @{ch['username']}: «{ch['title']}»" for ch in ref_channels_info[:4]]
+        ref_block = f"Каналы-ориентиры (ищем похожие по аудитории):\n" + "\n".join(lines) + "\n"
 
-На основе этих каналов и описания ЦА составь поисковые запросы для поиска ПОХОЖИХ каналов.
-"""
-    else:
-        ref_block = "Думай: что интересует эту аудиторию? Какие темы, сообщества, образ жизни?"
+    prompt = f"""Составь ключевые слова для поиска Telegram-каналов через Telemetr.
 
-    prompt = f"""Составь ключевые слова для поиска Telegram-каналов через Telemetr.io.
+Правила — ОБЯЗАТЕЛЬНЫ:
+- Только 1 слово (реже 2). Никаких фраз из 3+ слов!
+- Слова должны реально встречаться в НАЗВАНИЯХ Telegram-каналов
+- Хорошие примеры: бизнес, маркетинг, коучинг, продвижение, заработок, инвестиции, саморазвитие
+- Плохие: "женщины-предпринимательницы", "30-55", "рублей", "доходом"
 
-Правила:
-- ТОЛЬКО 1-2 слова. Никаких длинных фраз!
-- Слова должны встречаться в НАЗВАНИЯХ реальных Telegram-каналов
-- Пример хороших слов: бизнес, маркетинг, предпринимательство, коучинг, продвижение, инвестиции
-- Пример плохих: "женщины предпринимательницы" (слишком длинно и редко встречается в названиях)
-
-Продукт: {brief.get("product", "")}
-ЦА: {brief.get("target_audience", "")}
-Пол: {brief.get("gender", "")} · Возраст: {brief.get("age_range", "")}
+Продукт: {brief.get("product", "")[:100]}
+Ниша: {brief.get("niche", "")[:80]}
+ЦА: {brief.get("target_audience", "")[:100]}
+Пол: {brief.get("gender", "")}
 {ref_block}
-Дай 12 разных слов — смешай: тему продукта, интересы ЦА, смежные ниши:
+Верни JSON с 14 словами (разные темы: продукт, интересы ЦА, смежные ниши):
 {{"keywords": ["слово1", "слово2", ...]}}"""
     try:
-        result = ask_json(client, prompt)
-        kws = result.get("keywords", [])
-        # Оставляем только короткие слова (не длиннее 3 слов)
-        kws = [k for k in kws if len(k.split()) <= 3][:12]
-        if len(kws) < 5:
-            # Фолбэк — добавляем слова из ниши/продукта
+        result = ask_json(client, prompt, max_tokens=512)
+        kws = _clean_kws(result.get("keywords", []))
+        if len(kws) < 6:
+            # Фолбэк — только слова из product/niche, без target_audience
             for field in ["niche", "product"]:
                 for word in brief.get(field, "").split():
-                    w = word.strip(".,!?").lower()
-                    if len(w) > 3 and w not in kws:
-                        kws.append(w)
+                    w = word.strip(".,!?«»()-").lower()
+                    if len(w) >= 4 and not any(c.isdigit() for c in w) and w not in _KW_STOPWORDS:
+                        if w not in kws:
+                            kws.append(w)
         return kws[:12]
     except Exception:
+        # Жёсткий фолбэк — только product/niche
         words = []
-        for field in ["niche", "product", "target_audience"]:
-            words += [w.strip(".,!?").lower() for w in brief.get(field, "").split() if len(w) > 3]
+        for field in ["niche", "product"]:
+            for w in brief.get(field, "").split():
+                w = w.strip(".,!?«»()-").lower()
+                if len(w) >= 4 and not any(c.isdigit() for c in w) and w not in _KW_STOPWORDS:
+                    words.append(w)
         return list(dict.fromkeys(words))[:10]
 
 
@@ -633,20 +663,25 @@ def telemetr_similar_channels(api_key: str, channel_id: str) -> list:
 
 def search_telemetr(api_key: str, keywords: list, ref_usernames: list = None) -> list:
     """Поиск через Telemetr.io. Возвращает список словарей с данными каналов.
-    ref_usernames — каналы-ориентиры: ищем похожие на них через similar API."""
-    internal_ids = {}
 
-    # Если есть ориентиры — ищем похожие через Telemetr similar API
+    Шаг 1: search по ключевым словам → internal_id + базовые поля (title, members_count)
+    Шаг 2: info-batch по ID → получаем link (= t.me/username) и description
+    """
+    # internal_id → базовые данные из search (title, members_count)
+    id_to_base = {}
+
+    # Если есть ориентиры — ищем похожие через similar API
     if ref_usernames:
-        for ref_u in ref_usernames[:5]:
+        for ref_u in ref_usernames[:3]:
             ref_id = telemetr_get_channel_id(api_key, ref_u)
-            if ref_id:
-                similar_ids = telemetr_similar_channels(api_key, ref_id)
-                for sid in similar_ids:
-                    internal_ids[sid] = True
+            if ref_id and ref_id not in id_to_base:
+                id_to_base[ref_id] = {}
+                for sid in telemetr_similar_channels(api_key, ref_id):
+                    if sid not in id_to_base:
+                        id_to_base[sid] = {}
             time.sleep(0.3)
 
-    for kw in keywords[:10]:
+    for kw in keywords[:12]:
         try:
             resp = httpx.get(
                 "https://api.telemetr.io/v1/channels/search",
@@ -662,20 +697,25 @@ def search_telemetr(api_key: str, keywords: list, ref_usernames: list = None) ->
             for ch in data:
                 if not isinstance(ch, dict):
                     continue
-                iid = ch.get("internal_id")
-                if iid and str(iid) not in internal_ids:
-                    internal_ids[str(iid)] = True
+                iid = str(ch.get("internal_id", ""))
+                if iid and iid not in id_to_base:
+                    # search не возвращает username/link — сохраняем что есть
+                    id_to_base[iid] = {
+                        "title": ch.get("title") or ch.get("name") or "",
+                        "subscribers": int(ch.get("members_count") or 0),
+                    }
             time.sleep(0.5)
         except Exception:
             continue
 
-    if not internal_ids:
+    if not id_to_base:
         return []
 
-    # Батч-запрос → получаем полные данные канала (title, subscribers, description)
+    # Шаг 2: info-batch → получаем link (username) и description
     channels = []
     seen_usernames = set()
-    all_ids = list(internal_ids.keys())
+    all_ids = list(id_to_base.keys())
+
     for i in range(0, len(all_ids), 100):
         batch = all_ids[i:i + 100]
         try:
@@ -683,7 +723,7 @@ def search_telemetr(api_key: str, keywords: list, ref_usernames: list = None) ->
                 "https://api.telemetr.io/v1/channels/info-batch",
                 headers={"x-api-key": api_key},
                 params={"ids": ",".join(batch)},
-                timeout=15,
+                timeout=25,
             )
             if resp.status_code != 200:
                 continue
@@ -692,18 +732,22 @@ def search_telemetr(api_key: str, keywords: list, ref_usernames: list = None) ->
             if not isinstance(items, list):
                 continue
             for ch in items:
-                link = ch.get("link") or ""
-                if "t.me/" not in link:
-                    continue
-                uname = link.split("t.me/")[-1].strip("/")
+                # Извлекаем username из link
+                link = ch.get("link") or ch.get("url") or ""
+                uname = ""
+                if "t.me/" in link:
+                    uname = link.split("t.me/")[-1].strip("/")
+                elif ch.get("username"):
+                    uname = str(ch["username"]).lstrip("@")
                 if not uname or uname.startswith("+") or uname.lower() in seen_usernames:
                     continue
                 seen_usernames.add(uname.lower())
-                # Telemetr использует разные имена полей в разных версиях API
+                iid = str(ch.get("internal_id", ""))
+                base = id_to_base.get(iid, {})
                 subs = (ch.get("members_count") or ch.get("subscribers") or
-                        ch.get("participants_count") or ch.get("members") or 0)
-                title = (ch.get("title") or ch.get("name") or uname)
-                desc = (ch.get("about") or ch.get("description") or ch.get("bio") or "")
+                        ch.get("participants_count") or base.get("subscribers") or 0)
+                title = ch.get("title") or ch.get("name") or base.get("title") or uname
+                desc = ch.get("about") or ch.get("description") or ch.get("bio") or ""
                 channels.append({
                     "username": uname,
                     "title": str(title),
@@ -736,47 +780,31 @@ def search_web_for_channels(brief: dict, client: Groq, target_count: int) -> lis
 
 
 def generate_channels(brief: dict, reference_channels: list, client: Groq, count: int, exclude: set = None) -> list:
-    """Запрашиваем count каналов у AI. exclude — уже проверенные username-ы."""
+    """Запрашиваем count каналов у AI. Используется только если Telemetr недоступен."""
     if exclude is None:
         exclude = set()
-    count = min(count, 40)  # Groq JSON mode не осиливает больше 40 за раз
+    count = min(count, 20)  # не больше 20 — иначе JSON не успевает сгенерироваться
 
-    ref_block = ""
-    if reference_channels:
-        ref_block = f"Каналы-ориентиры: {', '.join(reference_channels)}. Подбери похожие по аудитории.\n"
+    ref_block = f"Ориентиры: {', '.join(reference_channels[:5])}.\n" if reference_channels else ""
 
-    exclude_block = ""
-    if exclude:
-        sample = list(exclude)[:30]
-        exclude_block = f"НЕ включай эти каналы — они уже проверены: {', '.join(sample)}\n"
+    prompt = f"""Telegram-каналы для рекламы (русскоязычные, публичные, реальные):
 
-    prompt = f"""Ты опытный медиабайер в Telegram. Подбери русскоязычные Telegram-каналы для рекламы.
-
-Продукт: {brief.get("product", "")}
-Ниша: {brief.get("niche", "")}
-Целевая аудитория: {brief.get("target_audience", "")}
-Пол: {brief.get("gender", "все")}
-Возраст: {brief.get("age_range", "")}
-{ref_block}{exclude_block}
-ВАЖНО — требования к каналам:
-- Только ПУБЛИЧНЫЕ русскоязычные Telegram-каналы с реальным username
-- Каналы должны быть ПОПУЛЯРНЫМИ и СУЩЕСТВУЮЩИМИ прямо сейчас (2024-2025)
-- Приоритет: каналы с аудиторией от 5 000 подписчиков
-- Тематика строго соответствует ЦА
-- Разный охват: крупные (500к+), средние (50-500к), нишевые (5-50к)
-- НЕ придумывай username — указывай только те каналы, в существовании которых уверен
-
-Верни JSON объект с массивом из {count} username-ов (без @):
-{{"channels": ["username1", "username2", ...]}}"""
+Продукт: {brief.get("product", "")[:80]}
+Ниша: {brief.get("niche", "")[:60]}
+ЦА: {brief.get("target_audience", "")[:100]}
+Пол: {brief.get("gender", "все")} · Возраст: {brief.get("age_range", "")}
+{ref_block}
+Только реальные существующие каналы с username. От 5000 подписчиков.
+Верни JSON: {{"channels": ["username1", "username2", ...]}} — ровно {count} штук."""
 
     try:
-        result = ask_json(client, prompt)
+        result = ask_json(client, prompt, max_tokens=1024)
         items = result.get("channels", result) if isinstance(result, dict) else result
         if isinstance(items, list):
             return [str(u).lstrip("@").strip() for u in items if u and str(u).lstrip("@").strip() not in exclude]
         return []
     except Exception as e:
-        st.error(f"Ошибка генерации каналов: {e}")
+        st.warning(f"AI генерация недоступна: {e}")
         return []
 
 
