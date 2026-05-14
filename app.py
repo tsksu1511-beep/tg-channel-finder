@@ -12,7 +12,7 @@ from groq import Groq
 load_dotenv()
 
 TG_API = "https://api.telegram.org/bot{token}/{method}"
-GROQ_MODEL = "llama-3.3-70b-versatile"
+GROQ_MODEL = "llama-3.1-8b-instant"  # 500k TPD vs 100k у 70b — в 5 раз выше лимит
 
 st.set_page_config(
     page_title="TG Channel Finder",
@@ -29,18 +29,22 @@ st.markdown("""
 <style>
 /* ── Base ── */
 :root {
-    --bg:       #07071A;
-    --card:     #0D0D2B;
-    --card2:    #11113A;
-    --border:   #1E1E50;
-    --primary:  #7C3AED;
-    --primary2: #A855F7;
-    --gold:     #F59E0B;
-    --success:  #10B981;
-    --danger:   #EF4444;
-    --text:     #F0F0FF;
-    --muted:    #7070AA;
-    --mono:     'JetBrains Mono', monospace;
+    --bg:        #F4F5FC;
+    --card:      #FFFFFF;
+    --card2:     #F8F8FE;
+    --border:    #DDE0F0;
+    --border2:   #ECEDF8;
+    --primary:   #6D28D9;
+    --primary2:  #8B5CF6;
+    --gold:      #D97706;
+    --success:   #059669;
+    --danger:    #DC2626;
+    --text:      #1A1240;
+    --muted:     #717499;
+    --mono:      'JetBrains Mono', monospace;
+    --shadow-sm: 0 1px 3px rgba(26,18,64,0.05);
+    --shadow:    0 2px 8px rgba(26,18,64,0.07), 0 1px 3px rgba(26,18,64,0.04);
+    --shadow-md: 0 6px 20px rgba(26,18,64,0.10), 0 2px 6px rgba(26,18,64,0.05);
 }
 
 html, body, .stApp {
@@ -51,22 +55,33 @@ html, body, .stApp {
 
 #MainMenu, footer, header { visibility: hidden !important; }
 
+/* ── Decorative background glow ── */
+.stApp::before {
+    content: '';
+    position: fixed;
+    top: -120px; right: -120px;
+    width: 700px; height: 700px;
+    background: radial-gradient(ellipse at center, rgba(139,92,246,0.08) 0%, transparent 65%);
+    pointer-events: none;
+    z-index: 0;
+}
+
 /* ── Sidebar ── */
 [data-testid="stSidebar"] {
-    background: #09091F !important;
+    background: linear-gradient(180deg, #EDEEF8 0%, #E6E7F4 100%) !important;
     border-right: 1px solid var(--border) !important;
 }
 [data-testid="stSidebar"] > div { padding-top: 1.5rem !important; }
 [data-testid="stSidebar"] label,
-[data-testid="stSidebar"] .stMarkdown p { color: #AAAACE !important; font-size: 0.82rem !important; }
+[data-testid="stSidebar"] .stMarkdown p { color: #5A5C7E !important; font-size: 0.82rem !important; }
 [data-testid="stSidebar"] h1,
 [data-testid="stSidebar"] h2,
 [data-testid="stSidebar"] h3 {
-    color: var(--primary2) !important;
+    color: var(--primary) !important;
     font-family: 'Outfit', sans-serif !important;
-    font-weight: 600 !important;
+    font-weight: 700 !important;
     font-size: 0.9rem !important;
-    letter-spacing: 0.12em !important;
+    letter-spacing: 0.1em !important;
     text-transform: uppercase !important;
 }
 
@@ -74,18 +89,19 @@ html, body, .stApp {
 .stTextInput input,
 .stTextArea textarea,
 .stNumberInput input {
-    background: #0A0A22 !important;
-    border: 1px solid var(--border) !important;
+    background: #FFFFFF !important;
+    border: 1.5px solid #D8DCF0 !important;
     border-radius: 10px !important;
     color: var(--text) !important;
     font-family: 'Outfit', sans-serif !important;
     font-size: 0.9rem !important;
     transition: border-color 0.2s, box-shadow 0.2s !important;
+    box-shadow: var(--shadow-sm) !important;
 }
 .stTextInput input:focus,
 .stTextArea textarea:focus {
     border-color: var(--primary) !important;
-    box-shadow: 0 0 0 3px rgba(124,58,237,0.18) !important;
+    box-shadow: 0 0 0 3px rgba(109,40,217,0.12), var(--shadow-sm) !important;
     outline: none !important;
 }
 .stTextInput input[type="password"] { letter-spacing: 0.1em !important; }
@@ -93,14 +109,19 @@ html, body, .stApp {
 /* ── Select ── */
 [data-baseweb="select"] > div,
 [data-baseweb="base-input"] > input {
-    background: #0A0A22 !important;
-    border-color: var(--border) !important;
+    background: #FFFFFF !important;
+    border-color: #D8DCF0 !important;
     color: var(--text) !important;
     font-family: 'Outfit', sans-serif !important;
+    box-shadow: var(--shadow-sm) !important;
 }
-[data-baseweb="menu"] { background: #0F0F30 !important; }
+[data-baseweb="menu"] {
+    background: #FFFFFF !important;
+    border: 1px solid var(--border) !important;
+    box-shadow: var(--shadow-md) !important;
+}
 [data-baseweb="option"] { color: var(--text) !important; }
-[data-baseweb="option"]:hover { background: #1A1A50 !important; }
+[data-baseweb="option"]:hover { background: #F2EEFF !important; }
 
 /* ── Buttons ── */
 .stButton > button {
@@ -114,11 +135,11 @@ html, body, .stApp {
     letter-spacing: 0.05em !important;
     padding: 0.5rem 1.2rem !important;
     transition: all 0.2s ease !important;
-    box-shadow: 0 4px 15px rgba(124,58,237,0.25) !important;
+    box-shadow: 0 4px 12px rgba(109,40,217,0.25) !important;
 }
 .stButton > button:hover {
     transform: translateY(-2px) !important;
-    box-shadow: 0 8px 28px rgba(124,58,237,0.45) !important;
+    box-shadow: 0 8px 24px rgba(109,40,217,0.38) !important;
 }
 .stButton > button[kind="primary"] {
     background: linear-gradient(135deg, var(--primary) 0%, #EC4899 100%) !important;
@@ -126,33 +147,34 @@ html, body, .stApp {
     padding: 0.75rem 1.5rem !important;
     letter-spacing: 0.12em !important;
     text-transform: uppercase !important;
-    box-shadow: 0 4px 20px rgba(124,58,237,0.35) !important;
+    box-shadow: 0 4px 18px rgba(109,40,217,0.30) !important;
 }
 .stButton > button[kind="primary"]:hover {
-    box-shadow: 0 8px 35px rgba(168,85,247,0.55) !important;
+    box-shadow: 0 8px 30px rgba(139,92,246,0.45) !important;
 }
 
 /* Download buttons */
 .stDownloadButton > button {
-    background: #0F0F30 !important;
-    border: 1px solid var(--border) !important;
-    color: var(--primary2) !important;
+    background: #FFFFFF !important;
+    border: 1.5px solid var(--border) !important;
+    color: var(--primary) !important;
     border-radius: 10px !important;
     font-family: 'Outfit', sans-serif !important;
     font-weight: 600 !important;
     letter-spacing: 0.05em !important;
     transition: all 0.2s !important;
+    box-shadow: var(--shadow-sm) !important;
 }
 .stDownloadButton > button:hover {
-    background: #1A1A48 !important;
+    background: #F5EFFF !important;
     border-color: var(--primary) !important;
-    box-shadow: 0 4px 16px rgba(124,58,237,0.2) !important;
+    box-shadow: 0 4px 14px rgba(109,40,217,0.18) !important;
     transform: translateY(-1px) !important;
 }
 
 /* ── Tabs ── */
 .stTabs [data-baseweb="tab-list"] {
-    background: #0A0A22 !important;
+    background: #EBEBF5 !important;
     border-radius: 12px !important;
     padding: 4px !important;
     gap: 4px !important;
@@ -172,6 +194,7 @@ html, body, .stApp {
 .stTabs [aria-selected="true"] {
     background: linear-gradient(135deg, var(--primary), var(--primary2)) !important;
     color: #fff !important;
+    box-shadow: 0 2px 8px rgba(109,40,217,0.28) !important;
 }
 
 /* ── Progress ── */
@@ -185,7 +208,7 @@ html, body, .stApp {
     50% { opacity: 0.85; }
 }
 .stProgress > div > div {
-    background: #1A1A40 !important;
+    background: #E0E3F2 !important;
     border-radius: 100px !important;
 }
 
@@ -193,7 +216,7 @@ html, body, .stApp {
 [data-baseweb="slider"] [role="slider"] {
     background: var(--primary) !important;
     border-color: var(--primary2) !important;
-    box-shadow: 0 0 10px rgba(124,58,237,0.5) !important;
+    box-shadow: 0 0 10px rgba(109,40,217,0.4) !important;
 }
 [data-baseweb="slider"] div[class*="Track"] > div {
     background: linear-gradient(90deg, var(--primary), var(--primary2)) !important;
@@ -203,13 +226,18 @@ html, body, .stApp {
 [data-testid="metric-container"] {
     background: var(--card) !important;
     border: 1px solid var(--border) !important;
+    border-top: 3px solid var(--primary2) !important;
     border-radius: 14px !important;
     padding: 1.1rem 1.2rem !important;
-    transition: border-color 0.2s !important;
+    transition: all 0.2s !important;
+    box-shadow: var(--shadow) !important;
 }
-[data-testid="metric-container"]:hover { border-color: var(--primary) !important; }
+[data-testid="metric-container"]:hover {
+    box-shadow: var(--shadow-md) !important;
+    transform: translateY(-2px) !important;
+}
 [data-testid="stMetricLabel"] { color: var(--muted) !important; font-size: 0.75rem !important; text-transform: uppercase !important; letter-spacing: 0.1em !important; }
-[data-testid="stMetricValue"] { color: var(--primary2) !important; font-family: 'Outfit', sans-serif !important; font-weight: 700 !important; font-size: 1.15rem !important; }
+[data-testid="stMetricValue"] { color: var(--primary) !important; font-family: 'Outfit', sans-serif !important; font-weight: 700 !important; font-size: 1.15rem !important; }
 
 /* ── Expanders ── */
 details {
@@ -218,6 +246,7 @@ details {
     border-radius: 12px !important;
     overflow: hidden !important;
     margin-bottom: 0.5rem !important;
+    box-shadow: var(--shadow-sm) !important;
 }
 details summary {
     color: var(--text) !important;
@@ -227,8 +256,9 @@ details summary {
     cursor: pointer !important;
     font-size: 0.9rem !important;
     letter-spacing: 0.02em !important;
+    background: var(--card) !important;
 }
-details summary:hover { background: #111130 !important; }
+details summary:hover { background: #F8F7FF !important; }
 details[open] summary { border-bottom: 1px solid var(--border) !important; }
 details > div { padding: 1rem 1.1rem !important; }
 
@@ -237,6 +267,7 @@ details > div { padding: 1rem 1.1rem !important; }
     border: 1px solid var(--border) !important;
     border-radius: 14px !important;
     overflow: hidden !important;
+    box-shadow: var(--shadow) !important;
 }
 .stDataFrame iframe { border-radius: 14px !important; }
 
@@ -249,15 +280,15 @@ details > div { padding: 1rem 1.1rem !important; }
 
 /* ── File uploader ── */
 [data-testid="stFileUploader"] {
-    background: #0A0A22 !important;
-    border: 1.5px dashed var(--border) !important;
+    background: #FAFBFF !important;
+    border: 1.5px dashed #C8CCE8 !important;
     border-radius: 12px !important;
     transition: border-color 0.2s !important;
 }
 [data-testid="stFileUploader"]:hover { border-color: var(--primary) !important; }
 
 /* ── Divider ── */
-hr { border-color: var(--border) !important; margin: 1.5rem 0 !important; }
+hr { border-color: var(--border2) !important; margin: 1.5rem 0 !important; }
 
 /* ── Spinner ── */
 [data-testid="stSpinner"] > div { border-top-color: var(--primary) !important; }
@@ -272,18 +303,20 @@ hr { border-color: var(--border) !important; margin: 1.5rem 0 !important; }
     border-radius: 16px;
     padding: 1.4rem 1.6rem;
     margin-bottom: 1rem;
-    transition: border-color 0.2s, box-shadow 0.2s;
+    transition: all 0.2s;
+    box-shadow: var(--shadow);
 }
 .card:hover {
-    border-color: var(--primary);
-    box-shadow: 0 0 25px rgba(124,58,237,0.1);
+    border-color: #C4B5FD;
+    box-shadow: var(--shadow-md);
+    transform: translateY(-2px);
 }
 .card-label {
     font-size: 0.7rem;
     font-weight: 700;
     letter-spacing: 0.15em;
     text-transform: uppercase;
-    color: var(--primary2);
+    color: var(--primary);
     margin-bottom: 0.6rem;
 }
 
@@ -294,15 +327,15 @@ hr { border-color: var(--border) !important; margin: 1.5rem 0 !important; }
 }
 .hero-badge {
     display: inline-block;
-    background: linear-gradient(135deg, rgba(124,58,237,0.2), rgba(168,85,247,0.1));
-    border: 1px solid rgba(124,58,237,0.4);
+    background: linear-gradient(135deg, rgba(109,40,217,0.10), rgba(139,92,246,0.06));
+    border: 1px solid rgba(109,40,217,0.25);
     border-radius: 100px;
     padding: 4px 14px;
     font-size: 0.68rem;
     font-weight: 700;
     letter-spacing: 0.2em;
     text-transform: uppercase;
-    color: var(--primary2);
+    color: var(--primary);
     margin-bottom: 1rem;
 }
 .hero-title {
@@ -311,7 +344,7 @@ hr { border-color: var(--border) !important; margin: 1.5rem 0 !important; }
     line-height: 0.95;
     letter-spacing: 0.04em;
     margin: 0 0 0.8rem 0;
-    background: linear-gradient(135deg, #fff 0%, var(--primary2) 50%, var(--gold) 100%);
+    background: linear-gradient(135deg, #1A1240 0%, var(--primary) 55%, var(--gold) 100%);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     background-clip: text;
@@ -335,13 +368,14 @@ hr { border-color: var(--border) !important; margin: 1.5rem 0 !important; }
     margin-top: 1rem;
 }
 .chip {
-    background: #0F0F30;
+    background: #FFFFFF;
     border: 1px solid var(--border);
     border-radius: 100px;
-    padding: 3px 12px;
+    padding: 4px 12px;
     font-size: 0.72rem;
-    color: var(--muted);
+    color: #5A5C7A;
     letter-spacing: 0.05em;
+    box-shadow: var(--shadow-sm);
 }
 
 /* ── Section headers ── */
@@ -365,18 +399,20 @@ hr { border-color: var(--border) !important; margin: 1.5rem 0 !important; }
 
 /* ── Brief analysis box ── */
 .brief-box {
-    background: linear-gradient(135deg, rgba(124,58,237,0.08), rgba(168,85,247,0.04));
-    border: 1px solid rgba(124,58,237,0.3);
+    background: linear-gradient(135deg, rgba(109,40,217,0.04), rgba(139,92,246,0.02));
+    border: 1px solid rgba(109,40,217,0.18);
+    border-left: 3px solid var(--primary);
     border-radius: 16px;
     padding: 1.3rem 1.5rem;
     margin: 1rem 0;
+    box-shadow: 0 2px 12px rgba(109,40,217,0.06);
 }
 .brief-box h4 {
     font-size: 0.7rem;
     font-weight: 700;
     letter-spacing: 0.15em;
     text-transform: uppercase;
-    color: var(--primary2);
+    color: var(--primary);
     margin: 0 0 0.8rem 0;
 }
 .brief-row { display: flex; gap: 1.5rem; flex-wrap: wrap; margin-bottom: 0.6rem; }
@@ -386,13 +422,13 @@ hr { border-color: var(--border) !important; margin: 1.5rem 0 !important; }
 
 /* ── Status bar ── */
 .status-bar {
-    background: var(--card);
-    border: 1px solid var(--border);
+    background: #F0FBF6;
+    border: 1px solid #BBF7D0;
     border-radius: 10px;
     padding: 0.7rem 1rem;
     font-family: var(--mono);
     font-size: 0.8rem;
-    color: var(--success);
+    color: #065F46;
     margin: 0.5rem 0;
     letter-spacing: 0.03em;
 }
@@ -408,7 +444,7 @@ hr { border-color: var(--border) !important; margin: 1.5rem 0 !important; }
     font-family: 'Anton', sans-serif;
     font-size: 2.5rem;
     letter-spacing: 0.04em;
-    color: var(--gold);
+    color: var(--primary);
     line-height: 1;
 }
 .results-label {
@@ -419,9 +455,9 @@ hr { border-color: var(--border) !important; margin: 1.5rem 0 !important; }
 
 /* ── Scrollbar ── */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
-::-webkit-scrollbar-track { background: var(--bg); }
-::-webkit-scrollbar-thumb { background: #2A2A60; border-radius: 100px; }
-::-webkit-scrollbar-thumb:hover { background: var(--primary); }
+::-webkit-scrollbar-track { background: #ECEDF5; }
+::-webkit-scrollbar-thumb { background: #C2C4DC; border-radius: 100px; }
+::-webkit-scrollbar-thumb:hover { background: var(--primary2); }
 </style>
 """, unsafe_allow_html=True)
 
@@ -884,7 +920,7 @@ with st.sidebar:
         st.caption("✅ Telemetr API Key")
 
     st.divider()
-    st.markdown('<p style="font-size:0.7rem;color:#44446A;letter-spacing:0.1em;text-align:center;text-transform:uppercase;">TG Channel Finder · AI Media Planning</p>', unsafe_allow_html=True)
+    st.markdown('<p style="font-size:0.7rem;color:#9496B8;letter-spacing:0.1em;text-align:center;text-transform:uppercase;">TG Channel Finder · AI Media Planning</p>', unsafe_allow_html=True)
 
 
 # ─── HERO ─────────────────────────────────────────────────────────────────────
@@ -977,7 +1013,7 @@ if run:
             <div class="brief-item"><div class="brief-key">Пол</div><div class="brief-val">{brief.get("gender","—")}</div></div>
             <div class="brief-item"><div class="brief-key">Возраст</div><div class="brief-val">{brief.get("age_range","—")}</div></div>
         </div>
-        <div class="brief-item"><div class="brief-key">Целевая аудитория</div><div class="brief-val" style="font-weight:400;font-size:0.9rem;color:#AAAACE">{brief.get("target_audience","—")}</div></div>
+        <div class="brief-item"><div class="brief-key">Целевая аудитория</div><div class="brief-val" style="font-weight:400;font-size:0.9rem;color:var(--muted)">{brief.get("target_audience","—")}</div></div>
     </div>
     """, unsafe_allow_html=True)
 
