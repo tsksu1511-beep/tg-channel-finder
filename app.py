@@ -886,10 +886,34 @@ def to_df(channels: list) -> pd.DataFrame:
 
 
 def get_secret(key: str) -> str:
+    """Try multiple key name variants to handle different naming conventions."""
+    variants = [
+        key,
+        key.lower(),
+        key.upper(),
+        key.replace("_API_KEY", "").replace("_KEY", ""),
+        key.replace("_API_KEY", "_KEY"),
+    ]
+    for k in variants:
+        try:
+            val = st.secrets.get(k)
+            if val:
+                return str(val)
+        except Exception:
+            pass
+    # Also try iterating all secrets to find case-insensitive match
     try:
-        return st.secrets[key]
+        for k, v in st.secrets.items():
+            if k.upper() == key.upper() and v:
+                return str(v)
     except Exception:
-        return os.getenv(key, "")
+        pass
+    # Fall back to environment variables
+    for k in variants:
+        val = os.getenv(k, "")
+        if val:
+            return val
+    return ""
 
 
 # ─── SIDEBAR ──────────────────────────────────────────────────────────────────
@@ -908,14 +932,17 @@ with st.sidebar:
     st.markdown("### ⚙️ Ключи API")
     if not groq_key:
         groq_key = st.text_input("Groq API Key", type="password", help="console.groq.com")
+        st.caption("Назови секрет: **GROQ_API_KEY**")
     else:
         st.caption("✅ Groq API Key")
     if not bot_token:
         bot_token = st.text_input("Telegram Bot Token", type="password")
+        st.caption("Назови секрет: **TELEGRAM_BOT_TOKEN**")
     else:
         st.caption("✅ Telegram Bot Token")
     if not telemetr_key:
         telemetr_key = st.text_input("Telemetr API Key", type="password", help="@telemetrio_api_bot в Telegram")
+        st.caption("Назови секрет: **TELEMETR_API_KEY**")
     else:
         st.caption("✅ Telemetr API Key")
 
