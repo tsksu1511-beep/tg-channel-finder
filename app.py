@@ -852,6 +852,13 @@ with st.sidebar:
     bot_token    = get_secret("TELEGRAM_BOT_TOKEN")
     telemetr_key = get_secret("TELEMETR_API_KEY")
 
+    # DEBUG: show which keys Streamlit actually sees
+    try:
+        _keys = list(st.secrets.keys())
+        st.caption(f"🔍 Secrets keys: {_keys}")
+    except Exception as _e:
+        st.caption(f"🔍 Secrets error: {_e}")
+
     st.divider()
     st.markdown("### ⚙️ Ключи API")
     if not groq_key:
