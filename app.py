@@ -465,19 +465,30 @@ def analyze_brief(brief_text: str, client: Groq) -> dict:
 
 
 def extract_keywords(brief: dict, client: Groq) -> list:
-    prompt = f"""Составь поисковые запросы для поиска Telegram-каналов по рекламному брифу.
+    prompt = f"""Составь короткие поисковые запросы (1-2 слова) для поиска Telegram-каналов.
 
 Продукт: {brief.get("product", "")}
 Ниша: {brief.get("niche", "")}
 ЦА: {brief.get("target_audience", "")}
 
-Верни JSON с 8 ключевыми словами/фразами на русском (тематика каналов, не название продукта):
-{{"keywords": ["слово1", "фраза два", ...]}}"""
+Верни JSON с 10 короткими словами на русском — только 1-2 слова, НЕ длинные фразы:
+{{"keywords": ["продажи", "маркетинг", "бизнес", "коучинг", ...]}}"""
     try:
         result = ask_json(client, prompt)
-        return result.get("keywords", [])[:8]
+        kws = result.get("keywords", [])[:10]
+        # Добавляем базовые слова из ниши и продукта
+        for field in ["niche", "product"]:
+            for word in brief.get(field, "").split():
+                w = word.strip(".,!?").lower()
+                if len(w) > 3 and w not in kws:
+                    kws.append(w)
+        return kws[:12]
     except Exception:
-        return []
+        # Фолбэк — базовые слова из брифа
+        words = []
+        for field in ["niche", "product", "target_audience"]:
+            words += [w.strip(".,!?").lower() for w in brief.get(field, "").split() if len(w) > 3]
+        return list(dict.fromkeys(words))[:10]
 
 
 def search_duckduckgo(query: str) -> list:
@@ -994,18 +1005,19 @@ if run:
     else:
         st.caption("Telemetr API не настроен — использую AI генерацию")
 
-    # 2б. AI генерация батчами по 40 (Groq не осиливает больше за раз)
-    ai_needed = max(channel_count * 2 - len(mtproto_handles), channel_count)
-    batches = max(1, min((ai_needed + 39) // 40, 4))
+    # 2б. AI генерация — только если Telemetr нашёл мало
     ai_handles = []
-    exclude_ai = set(mtproto_handles + ref_handles + manual_handles)
-    for i in range(batches):
-        with st.spinner(f"🤖 AI подбирает каналы (партия {i+1} из {batches})..."):
-            batch = generate_channels(brief, ref_handles, client, 40,
-                                      exclude=exclude_ai | set(ai_handles))
-            ai_handles.extend(batch)
-        if len(ai_handles) >= ai_needed:
-            break
+    ai_needed = max(channel_count - len(mtproto_handles), 0)
+    if ai_needed > 0:
+        batches = max(1, min((ai_needed + 39) // 40, 3))
+        exclude_ai = set(mtproto_handles + ref_handles + manual_handles)
+        for i in range(batches):
+            with st.spinner(f"🤖 AI подбирает каналы (партия {i+1} из {batches})..."):
+                batch = generate_channels(brief, ref_handles, client, 40,
+                                          exclude=exclude_ai | set(ai_handles))
+                ai_handles.extend(batch)
+            if len(ai_handles) >= ai_needed:
+                break
 
     if not mtproto_handles and not ai_handles:
         st.error("Не удалось найти каналы. Попробуй переформулировать бриф.")
