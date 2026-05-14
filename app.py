@@ -552,67 +552,6 @@ def search_duckduckgo(query: str) -> list:
         return []
 
 
-def search_via_mtproto(session: str, keywords: list) -> list:
-    """Поиск реальных каналов через Telegram MTProto."""
-    try:
-        from telethon import TelegramClient
-        from telethon.sessions import StringSession
-        from telethon.tl.functions.contacts import SearchRequest
-    except ImportError:
-        st.warning("MTProto: telethon не установлен")
-        return []
-
-    import asyncio
-    import concurrent.futures
-
-    keywords = keywords[:10]
-
-    async def _run():
-        client = TelegramClient(
-            StringSession(session), 2040, "b18441a1ff607e10a989891a5462e627"
-        )
-        await client.connect()
-        authorized = await client.is_user_authorized()
-        if not authorized:
-            await client.disconnect()
-            return "__NOT_AUTHORIZED__", []
-        found = {}
-        for kw in keywords:
-            try:
-                res = await client(SearchRequest(q=kw, limit=50))
-                for ch in res.chats:
-                    uname = getattr(ch, "username", None)
-                    if uname and uname not in found:
-                        found[uname] = uname
-                await asyncio.sleep(2)
-            except Exception as e:
-                await asyncio.sleep(10 if "FLOOD" in str(e).upper() else 3)
-        await client.disconnect()
-        return "ok", list(found.keys())
-
-    def _thread_run():
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            return loop.run_until_complete(_run())
-        finally:
-            loop.close()
-            asyncio.set_event_loop(None)
-
-    try:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-            status, channels = ex.submit(_thread_run).result(timeout=120)
-        if status == "__NOT_AUTHORIZED__":
-            st.warning("MTProto: сессия устарела — нужно обновить TELEGRAM_SESSION в secrets")
-            return []
-        return channels
-    except concurrent.futures.TimeoutError:
-        st.warning("MTProto: таймаут соединения с Telegram")
-        return []
-    except Exception as e:
-        st.warning(f"MTProto ошибка: {e}")
-        return []
-
 
 def search_telemetr(api_key: str, keywords: list, limit_per_kw: int = 50) -> list:
     """Поиск каналов через Telemetr.io API по ключевым словам."""
