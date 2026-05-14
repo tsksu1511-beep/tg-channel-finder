@@ -515,27 +515,34 @@ def extract_keywords(brief: dict, client: Groq, ref_channels_info: list = None) 
     else:
         ref_block = "Думай: что интересует эту аудиторию? Какие темы, сообщества, образ жизни?"
 
-    prompt = f"""Составь поисковые запросы для поиска Telegram-каналов, где ЧИТАЕТ целевая аудитория.
-Ищем не каналы о продукте — ищем каналы с нужной нам аудиторией внутри.
+    prompt = f"""Составь ключевые слова для поиска Telegram-каналов через Telemetr.io.
+
+Правила:
+- ТОЛЬКО 1-2 слова. Никаких длинных фраз!
+- Слова должны встречаться в НАЗВАНИЯХ реальных Telegram-каналов
+- Пример хороших слов: бизнес, маркетинг, предпринимательство, коучинг, продвижение, инвестиции
+- Пример плохих: "женщины предпринимательницы" (слишком длинно и редко встречается в названиях)
 
 Продукт: {brief.get("product", "")}
 ЦА: {brief.get("target_audience", "")}
 Пол: {brief.get("gender", "")} · Возраст: {brief.get("age_range", "")}
 {ref_block}
-Верни JSON с 12 запросами (1-3 слова) на русском, разнообразными по темам:
-{{"keywords": ["запрос1", "запрос2", ...]}}"""
+Дай 12 разных слов — смешай: тему продукта, интересы ЦА, смежные ниши:
+{{"keywords": ["слово1", "слово2", ...]}}"""
     try:
         result = ask_json(client, prompt)
-        kws = result.get("keywords", [])[:10]
-        # Добавляем базовые слова из ниши и продукта
-        for field in ["niche", "product"]:
-            for word in brief.get(field, "").split():
-                w = word.strip(".,!?").lower()
-                if len(w) > 3 and w not in kws:
-                    kws.append(w)
+        kws = result.get("keywords", [])
+        # Оставляем только короткие слова (не длиннее 3 слов)
+        kws = [k for k in kws if len(k.split()) <= 3][:12]
+        if len(kws) < 5:
+            # Фолбэк — добавляем слова из ниши/продукта
+            for field in ["niche", "product"]:
+                for word in brief.get(field, "").split():
+                    w = word.strip(".,!?").lower()
+                    if len(w) > 3 and w not in kws:
+                        kws.append(w)
         return kws[:12]
     except Exception:
-        # Фолбэк — базовые слова из брифа
         words = []
         for field in ["niche", "product", "target_audience"]:
             words += [w.strip(".,!?").lower() for w in brief.get(field, "").split() if len(w) > 3]
@@ -1107,19 +1114,14 @@ if run:
 
     telemetr_usernames = {c["username"].lower() for c in telemetr_channels}
 
-    # 4b. AI генерация — только если Telemetr нашёл мало
+    # 4b. AI генерация — только если Telemetr совсем ничего не нашёл
+    # (AI каналы часто фейковые, Telemetr даёт реальные)
     ai_handles = []
-    ai_needed = max(channel_count - len(telemetr_channels), 0)
-    if ai_needed > 0:
-        batches = max(1, min((ai_needed + 39) // 40, 3))
-        exclude_ai = telemetr_usernames | {h.lower() for h in ref_handles + manual_handles}
-        for i in range(batches):
-            with st.spinner(f"🤖 AI подбирает каналы (партия {i+1} из {batches})..."):
-                batch = generate_channels(brief, ref_handles, client, 40, exclude=exclude_ai)
-                ai_handles.extend(batch)
-                exclude_ai.update(h.lower() for h in batch)
-            if len(ai_handles) >= ai_needed:
-                break
+    if not telemetr_channels:
+        ai_needed = min(channel_count, 40)
+        exclude_ai = {h.lower() for h in ref_handles + manual_handles}
+        with st.spinner("🤖 AI подбирает каналы (Telemetr недоступен)..."):
+            ai_handles = generate_channels(brief, ref_handles, client, ai_needed, exclude=exclude_ai)
 
     if not telemetr_channels and not ai_handles:
         st.error("Не удалось найти каналы. Попробуй переформулировать бриф.")
@@ -1164,10 +1166,16 @@ if run:
         handles_text = "  ·  ".join(f"`@{c['username']}`" for c in enriched)
         st.markdown(f'<p style="font-family:var(--mono);font-size:0.78rem;color:#7070AA;line-height:2">{handles_text}</p>', unsafe_allow_html=True)
 
-    # 3. Фильтры по подписчикам
-    filtered_channels = [c for c in enriched if c.get("subscribers", 0) >= min_subs]
+    # 3. Фильтры по подписчикам (0 = неизвестно, не фильтруем)
+    filtered_channels = [
+        c for c in enriched
+        if c.get("subscribers", 0) == 0 or c.get("subscribers", 0) >= min_subs
+    ]
     if max_subs > 0:
-        filtered_channels = [c for c in filtered_channels if c.get("subscribers", 0) <= max_subs]
+        filtered_channels = [
+            c for c in filtered_channels
+            if c.get("subscribers", 0) == 0 or c.get("subscribers", 0) <= max_subs
+        ]
 
     if not filtered_channels:
         st.warning("После фильтрации ничего не осталось. Попробуй уменьшить фильтры подписчиков.")
