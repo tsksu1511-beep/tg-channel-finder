@@ -853,16 +853,24 @@ with st.sidebar:
     max_subs = st.number_input("Макс. подписчики (0 = без лимита)", min_value=0, value=0, step=10000)
     min_subs = 1000
 
-    groq_key = get_secret("GROQ_API_KEY")
-    bot_token = get_secret("TELEGRAM_BOT_TOKEN")
+    groq_key     = get_secret("GROQ_API_KEY")
+    bot_token    = get_secret("TELEGRAM_BOT_TOKEN")
+    telemetr_key = get_secret("TELEMETR_API_KEY")
 
-    if not groq_key or not bot_token:
-        st.divider()
-        st.markdown("### ⚙️ Ключи API")
-        if not groq_key:
-            groq_key = st.text_input("Groq API Key", type="password", help="console.groq.com — бесплатно")
-        if not bot_token:
-            bot_token = st.text_input("Telegram Bot Token", type="password")
+    st.divider()
+    st.markdown("### ⚙️ Ключи API")
+    if not groq_key:
+        groq_key = st.text_input("Groq API Key", type="password", help="console.groq.com")
+    else:
+        st.caption("✅ Groq API Key")
+    if not bot_token:
+        bot_token = st.text_input("Telegram Bot Token", type="password")
+    else:
+        st.caption("✅ Telegram Bot Token")
+    if not telemetr_key:
+        telemetr_key = st.text_input("Telemetr API Key", type="password", help="@telemetrio_api_bot в Telegram")
+    else:
+        st.caption("✅ Telemetr API Key")
 
     st.divider()
     st.markdown('<p style="font-size:0.7rem;color:#44446A;letter-spacing:0.1em;text-align:center;text-transform:uppercase;">TG Channel Finder · AI Media Planning</p>', unsafe_allow_html=True)
@@ -967,35 +975,24 @@ if run:
 
     # 2. Поиск каналов
     ask_count = channel_count * 3
-    telemetr_key = get_secret("TELEMETR_API_KEY")
-    tg_session   = get_secret("TELEGRAM_SESSION")
     mtproto_handles = []
 
-    # Извлекаем ключевые слова один раз для обоих методов
+    # Извлекаем ключевые слова из брифа
     with st.spinner("🧠 Извлекаю ключевые слова из брифа..."):
         keywords = extract_keywords(brief, client)
     if keywords:
         st.caption(f"Ключевые слова: {', '.join(keywords)}")
 
-    # 2а. Telemetr.io (приоритет — реальная база каналов)
+    # Поиск через Telemetr.io
     if telemetr_key:
         with st.spinner("🔍 Ищу каналы через Telemetr.io..."):
-            mtproto_handles = search_telemetr(telemetr_key, keywords, limit_per_kw=50)
+            mtproto_handles = search_telemetr(telemetr_key, keywords)
         if mtproto_handles:
             st.info(f"📡 Telemetr.io: найдено {len(mtproto_handles)} каналов")
         else:
-            st.warning("Telemetr.io не вернул результатов")
-
-    # 2б. MTProto как резерв (если нет Telemetr или нашёл мало)
-    elif tg_session:
-        with st.spinner("🔍 Ищу каналы через Telegram MTProto..."):
-            mtproto_handles = search_via_mtproto(tg_session, keywords)
-        if mtproto_handles:
-            st.info(f"📡 MTProto: найдено {len(mtproto_handles)} каналов")
-        else:
-            st.warning("MTProto не вернул результатов — использую AI")
+            st.warning("Telemetr.io не вернул каналов — использую AI генерацию")
     else:
-        st.caption("Поиск через API не настроен — использую AI генерацию")
+        st.caption("Telemetr API не настроен — использую AI генерацию")
 
     # 2б. AI генерация батчами по 40 (Groq не осиливает больше за раз)
     ai_needed = max(channel_count * 2 - len(mtproto_handles), channel_count)
