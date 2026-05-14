@@ -501,14 +501,19 @@ def analyze_brief(brief_text: str, client: Groq) -> dict:
 
 
 def extract_keywords(brief: dict, client: Groq) -> list:
-    prompt = f"""Составь короткие поисковые запросы (1-2 слова) для поиска Telegram-каналов.
+    prompt = f"""Составь поисковые запросы для поиска Telegram-каналов, ГДЕ СИДИТ ЦЕЛЕВАЯ АУДИТОРИЯ.
+
+ВАЖНО: ищем не каналы о продукте — ищем каналы, которые ЧИТАЕТ целевая аудитория.
+Думай: что интересует этих людей? Какие темы они изучают? Какие сообщества посещают?
 
 Продукт: {brief.get("product", "")}
 Ниша: {brief.get("niche", "")}
 ЦА: {brief.get("target_audience", "")}
+Пол: {brief.get("gender", "")}
+Возраст: {brief.get("age_range", "")}
 
-Верни JSON с 10 короткими словами на русском — только 1-2 слова, НЕ длинные фразы:
-{{"keywords": ["продажи", "маркетинг", "бизнес", "коучинг", ...]}}"""
+Верни JSON с 12 запросами (1-3 слова) на русском. Разнообразь: интересы ЦА, смежные темы, образ жизни, боли аудитории:
+{{"keywords": ["запрос1", "запрос2", ...]}}"""
     try:
         result = ask_json(client, prompt)
         kws = result.get("keywords", [])[:10]
@@ -553,12 +558,11 @@ def search_duckduckgo(query: str) -> list:
 
 
 
-def search_telemetr(api_key: str, keywords: list, limit_per_kw: int = 50) -> list:
-    """Поиск каналов через Telemetr.io API по ключевым словам."""
+def search_telemetr(api_key: str, keywords: list) -> list:
+    """Поиск через Telemetr.io. Возвращает список словарей с данными каналов."""
     internal_ids = {}
 
-    # Шаг 1: поиск по ключевым словам → internal_id (макс 25 на бесплатном тарифе)
-    for kw in keywords[:8]:
+    for kw in keywords[:10]:
         try:
             resp = httpx.get(
                 "https://api.telemetr.io/v1/channels/search",
@@ -575,8 +579,8 @@ def search_telemetr(api_key: str, keywords: list, limit_per_kw: int = 50) -> lis
                 if not isinstance(ch, dict):
                     continue
                 iid = ch.get("internal_id")
-                if iid and iid not in internal_ids:
-                    internal_ids[iid] = True
+                if iid and str(iid) not in internal_ids:
+                    internal_ids[str(iid)] = True
             time.sleep(0.5)
         except Exception:
             continue
@@ -584,8 +588,9 @@ def search_telemetr(api_key: str, keywords: list, limit_per_kw: int = 50) -> lis
     if not internal_ids:
         return []
 
-    # Шаг 2: батч-запрос для получения username через поле link
-    usernames = []
+    # Батч-запрос → получаем полные данные канала (title, subscribers, description)
+    channels = []
+    seen_usernames = set()
     all_ids = list(internal_ids.keys())
     for i in range(0, len(all_ids), 100):
         batch = all_ids[i:i + 100]
@@ -599,17 +604,33 @@ def search_telemetr(api_key: str, keywords: list, limit_per_kw: int = 50) -> lis
             if resp.status_code != 200:
                 continue
             data = resp.json()
-            channels = data.get("channels", data) if isinstance(data, dict) else data
-            for ch in channels:
+            items = data.get("channels", data) if isinstance(data, dict) else data
+            if not isinstance(items, list):
+                continue
+            for ch in items:
                 link = ch.get("link") or ""
-                if "t.me/" in link:
-                    uname = link.split("t.me/")[-1].strip("/")
-                    if uname and not uname.startswith("+"):
-                        usernames.append(uname)
+                if "t.me/" not in link:
+                    continue
+                uname = link.split("t.me/")[-1].strip("/")
+                if not uname or uname.startswith("+") or uname.lower() in seen_usernames:
+                    continue
+                seen_usernames.add(uname.lower())
+                # Telemetr использует разные имена полей в разных версиях API
+                subs = (ch.get("members_count") or ch.get("subscribers") or
+                        ch.get("participants_count") or ch.get("members") or 0)
+                title = (ch.get("title") or ch.get("name") or uname)
+                desc = (ch.get("about") or ch.get("description") or ch.get("bio") or "")
+                channels.append({
+                    "username": uname,
+                    "title": str(title),
+                    "description": str(desc)[:300],
+                    "subscribers": int(subs) if subs else 0,
+                    "source": "telemetr",
+                })
         except Exception:
             continue
 
-    return usernames
+    return channels
 
 
 def search_web_for_channels(brief: dict, client: Groq, target_count: int) -> list:
@@ -689,17 +710,25 @@ def score_channels(channels: list, brief: dict, client: Groq) -> list:
         for ch in channels
     ]
 
-    prompt = f"""Оцени Telegram-каналы для рекламы.
+    prompt = f"""Оцени Telegram-каналы для рекламного размещения. Главный критерий — совпадение АУДИТОРИИ канала с целевой аудиторией продукта.
 
 Продукт: {brief.get("product", "")}
-ЦА: {brief.get("target_audience", "")}
+Целевая аудитория: {brief.get("target_audience", "")}
+Пол: {brief.get("gender", "все")} · Возраст: {brief.get("age_range", "")}
 Ниша: {brief.get("niche", "")}
+
+Оценивай по критериям:
+- Аудитория канала совпадает с ЦА (пол, возраст, интересы, доход) — это главное (60 баллов)
+- Тематика канала близка к нише продукта (20 баллов)
+- Размер аудитории достаточный (20 баллов)
+
+Высокий балл (70-100): аудитория ТОЧНО совпадает. Средний (40-69): частично. Низкий (0-39): не совпадает.
 
 Каналы:
 {json.dumps(summaries, ensure_ascii=False)}
 
-Верни JSON объект с массивом оценок (0-100):
-{{"scores": [{{"username": "...", "score": 85, "reason": "почему подходит или нет"}}, ...]}}"""
+Верни JSON:
+{{"scores": [{{"username": "...", "score": 85, "reason": "краткое объяснение на русском (1 предложение)"}}, ...]}}"""
 
     try:
         result = ask_json(client, prompt)
@@ -978,94 +1007,90 @@ if run:
     ref_handles = parse_handles(reference_raw)
     manual_handles = parse_handles(manual_raw)
 
-    # 2. Поиск каналов
-    ask_count = channel_count * 3
-    mtproto_handles = []
-
-    # Извлекаем ключевые слова из брифа
-    with st.spinner("🧠 Извлекаю ключевые слова из брифа..."):
+    # 2. Ключевые слова
+    with st.spinner("🧠 Анализирую аудиторию и формирую запросы..."):
         keywords = extract_keywords(brief, client)
     if keywords:
         st.caption(f"Ключевые слова: {', '.join(keywords)}")
 
-    # Поиск через Telemetr.io
+    # 2a. Telemetr → данные каналов напрямую (БЕЗ Bot API верификации)
+    telemetr_channels = []
     if telemetr_key:
         with st.spinner("🔍 Ищу каналы через Telemetr.io..."):
-            mtproto_handles = search_telemetr(telemetr_key, keywords)
-        if mtproto_handles:
-            st.info(f"📡 Telemetr.io: найдено {len(mtproto_handles)} каналов")
+            telemetr_channels = search_telemetr(telemetr_key, keywords)
+        if telemetr_channels:
+            st.info(f"📡 Telemetr.io: найдено {len(telemetr_channels)} каналов")
         else:
             st.warning("Telemetr.io не вернул каналов — использую AI генерацию")
     else:
         st.caption("Telemetr API не настроен — использую AI генерацию")
 
-    # 2б. AI генерация — только если Telemetr нашёл мало
+    telemetr_usernames = {c["username"].lower() for c in telemetr_channels}
+
+    # 2b. AI генерация — только если Telemetr нашёл мало
     ai_handles = []
-    ai_needed = max(channel_count - len(mtproto_handles), 0)
+    ai_needed = max(channel_count - len(telemetr_channels), 0)
     if ai_needed > 0:
         batches = max(1, min((ai_needed + 39) // 40, 3))
-        exclude_ai = set(mtproto_handles + ref_handles + manual_handles)
+        exclude_ai = telemetr_usernames | {h.lower() for h in ref_handles + manual_handles}
         for i in range(batches):
             with st.spinner(f"🤖 AI подбирает каналы (партия {i+1} из {batches})..."):
-                batch = generate_channels(brief, ref_handles, client, 40,
-                                          exclude=exclude_ai | set(ai_handles))
+                batch = generate_channels(brief, ref_handles, client, 40, exclude=exclude_ai)
                 ai_handles.extend(batch)
+                exclude_ai.update(h.lower() for h in batch)
             if len(ai_handles) >= ai_needed:
                 break
 
-    if not mtproto_handles and not ai_handles:
+    if not telemetr_channels and not ai_handles:
         st.error("Не удалось найти каналы. Попробуй переформулировать бриф.")
         st.stop()
 
-    all_handles = list(dict.fromkeys(mtproto_handles + ai_handles + ref_handles + manual_handles))
-    tried = set(all_handles)
-
-    # 3. Проверка раунд 1
-    st.markdown(f'<div class="section-title" style="margin-top:1rem">📡 Проверка через Telegram — {len(all_handles)} каналов</div>', unsafe_allow_html=True)
-    prog = st.progress(0)
-    stat = st.empty()
-    enriched = enrich_channels(bot_token, all_handles, prog, stat)
-    stat.empty()
-    prog.empty()
-
-    # Если нашли меньше нужного — второй раунд
-    if len(enriched) < channel_count:
-        still_need = (channel_count - len(enriched)) * 3
-        stat.markdown(f'<div class="status-bar">🔄 Найдено {len(enriched)} из {channel_count} — запускаю раунд 2...</div>', unsafe_allow_html=True)
-        with st.spinner("🔍 Ищу ещё каналы (раунд 2)..."):
-            ai_handles_2 = generate_channels(brief, ref_handles, client, still_need, exclude=tried)
-        new_handles = [h for h in ai_handles_2 if h not in tried]
-        tried.update(new_handles)
-        if new_handles:
-            st.markdown(f'<div class="section-title" style="margin-top:0.5rem">📡 Проверка раунд 2 — {len(new_handles)} каналов</div>', unsafe_allow_html=True)
-            prog2 = st.progress(0)
-            stat2 = st.empty()
-            enriched2 = enrich_channels(bot_token, new_handles, prog2, stat2)
-            stat2.empty()
-            prog2.empty()
-            enriched = enriched + enriched2
+    # 2c. Bot API верификация — только для AI и ручных каналов
+    to_verify = list(dict.fromkeys(
+        [h for h in ai_handles + ref_handles + manual_handles
+         if h.lower() not in telemetr_usernames]
+    ))
+    verified_channels = []
+    if to_verify:
+        st.markdown(f'<div class="section-title" style="margin-top:1rem">📡 Проверяю AI-каналы через Telegram — {len(to_verify)}</div>', unsafe_allow_html=True)
+        prog = st.progress(0)
+        stat = st.empty()
+        verified_channels = enrich_channels(bot_token, to_verify, prog, stat)
         stat.empty()
+        prog.empty()
+
+    # Объединяем: Telemetr (прямые данные) + верифицированные AI/ручные каналы
+    seen_u = set()
+    enriched = []
+    for ch in telemetr_channels + verified_channels:
+        k = ch["username"].lower()
+        if k not in seen_u:
+            seen_u.add(k)
+            enriched.append(ch)
 
     found = len(enriched)
-    not_found = len(tried) - found
+    verified_failed = len(to_verify) - len(verified_channels)
 
     if found == 0:
-        st.error("Ни один канал не прошёл проверку. Возможно, каналы приватные.")
+        st.error("Не удалось найти каналы. Возможно, Telemetr не вернул данных и AI-каналы приватные.")
         st.stop()
 
-    st.success(f"✅ Найдено **{found}** каналов" + (f"  ·  не прошли проверку: {not_found}" if not_found else ""))
+    msg = f"✅ Найдено **{found}** каналов"
+    if verified_failed:
+        msg += f"  ·  AI-каналов не прошло проверку: {verified_failed}"
+    st.success(msg)
 
     with st.expander(f"👀 Все найденные каналы — {found} штук"):
         handles_text = "  ·  ".join(f"`@{c['username']}`" for c in enriched)
         st.markdown(f'<p style="font-family:var(--mono);font-size:0.78rem;color:#7070AA;line-height:2">{handles_text}</p>', unsafe_allow_html=True)
 
-    # 4. Фильтры
+    # 3. Фильтры по подписчикам
     filtered_channels = [c for c in enriched if c.get("subscribers", 0) >= min_subs]
     if max_subs > 0:
         filtered_channels = [c for c in filtered_channels if c.get("subscribers", 0) <= max_subs]
 
     if not filtered_channels:
-        st.warning("После фильтрации ничего не осталось.")
+        st.warning("После фильтрации ничего не осталось. Попробуй уменьшить фильтры подписчиков.")
         st.stop()
 
     # 5. Скоринг
