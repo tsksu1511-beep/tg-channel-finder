@@ -500,19 +500,29 @@ def analyze_brief(brief_text: str, client: Groq) -> dict:
         return {}
 
 
-def extract_keywords(brief: dict, client: Groq) -> list:
-    prompt = f"""Составь поисковые запросы для поиска Telegram-каналов, ГДЕ СИДИТ ЦЕЛЕВАЯ АУДИТОРИЯ.
+def extract_keywords(brief: dict, client: Groq, ref_channels_info: list = None) -> list:
+    ref_block = ""
+    if ref_channels_info:
+        lines = []
+        for ch in ref_channels_info[:5]:
+            lines.append(f"- @{ch['username']}: «{ch['title']}» — {ch['description'][:120]}")
+        ref_block = f"""
+Вот каналы-ориентиры, где уже есть нужная аудитория. Проанализируй их темы и тональность:
+{chr(10).join(lines)}
 
-ВАЖНО: ищем не каналы о продукте — ищем каналы, которые ЧИТАЕТ целевая аудитория.
-Думай: что интересует этих людей? Какие темы они изучают? Какие сообщества посещают?
+На основе этих каналов и описания ЦА составь поисковые запросы для поиска ПОХОЖИХ каналов.
+"""
+    else:
+        ref_block = "Думай: что интересует эту аудиторию? Какие темы, сообщества, образ жизни?"
+
+    prompt = f"""Составь поисковые запросы для поиска Telegram-каналов, где ЧИТАЕТ целевая аудитория.
+Ищем не каналы о продукте — ищем каналы с нужной нам аудиторией внутри.
 
 Продукт: {brief.get("product", "")}
-Ниша: {brief.get("niche", "")}
 ЦА: {brief.get("target_audience", "")}
-Пол: {brief.get("gender", "")}
-Возраст: {brief.get("age_range", "")}
-
-Верни JSON с 12 запросами (1-3 слова) на русском. Разнообразь: интересы ЦА, смежные темы, образ жизни, боли аудитории:
+Пол: {brief.get("gender", "")} · Возраст: {brief.get("age_range", "")}
+{ref_block}
+Верни JSON с 12 запросами (1-3 слова) на русском, разнообразными по темам:
 {{"keywords": ["запрос1", "запрос2", ...]}}"""
     try:
         result = ask_json(client, prompt)
@@ -558,9 +568,76 @@ def search_duckduckgo(query: str) -> list:
 
 
 
-def search_telemetr(api_key: str, keywords: list) -> list:
-    """Поиск через Telemetr.io. Возвращает список словарей с данными каналов."""
+def telemetr_get_channel_id(api_key: str, username: str) -> str | None:
+    """Получить internal_id канала по username через Telemetr."""
+    try:
+        resp = httpx.get(
+            "https://api.telemetr.io/v1/channels/search",
+            headers={"x-api-key": api_key},
+            params={"term": username.lstrip("@"), "limit": 5},
+            timeout=10,
+        )
+        if resp.status_code != 200:
+            return None
+        data = resp.json()
+        if not isinstance(data, list):
+            return None
+        uname_clean = username.lstrip("@").lower()
+        for ch in data:
+            link = ch.get("link") or ""
+            if uname_clean in link.lower():
+                iid = ch.get("internal_id")
+                return str(iid) if iid else None
+    except Exception:
+        pass
+    return None
+
+
+def telemetr_similar_channels(api_key: str, channel_id: str) -> list:
+    """Найти похожие каналы по internal_id через Telemetr."""
+    for endpoint in [
+        f"https://api.telemetr.io/v1/channels/{channel_id}/similar",
+        f"https://api.telemetr.io/v1/channels/similar",
+    ]:
+        try:
+            params = {"limit": 50}
+            if "similar" == endpoint.split("/")[-1]:
+                params["id"] = channel_id
+            resp = httpx.get(
+                endpoint,
+                headers={"x-api-key": api_key},
+                params=params,
+                timeout=10,
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                items = data if isinstance(data, list) else data.get("channels", [])
+                ids = []
+                for ch in items:
+                    iid = ch.get("internal_id")
+                    if iid:
+                        ids.append(str(iid))
+                if ids:
+                    return ids
+        except Exception:
+            continue
+    return []
+
+
+def search_telemetr(api_key: str, keywords: list, ref_usernames: list = None) -> list:
+    """Поиск через Telemetr.io. Возвращает список словарей с данными каналов.
+    ref_usernames — каналы-ориентиры: ищем похожие на них через similar API."""
     internal_ids = {}
+
+    # Если есть ориентиры — ищем похожие через Telemetr similar API
+    if ref_usernames:
+        for ref_u in ref_usernames[:5]:
+            ref_id = telemetr_get_channel_id(api_key, ref_u)
+            if ref_id:
+                similar_ids = telemetr_similar_channels(api_key, ref_id)
+                for sid in similar_ids:
+                    internal_ids[sid] = True
+            time.sleep(0.3)
 
     for kw in keywords[:10]:
         try:
@@ -881,13 +958,6 @@ with st.sidebar:
     bot_token    = get_secret("TELEGRAM_BOT_TOKEN")
     telemetr_key = get_secret("TELEMETR_API_KEY")
 
-    # DEBUG: show which keys Streamlit actually sees
-    try:
-        _keys = list(st.secrets.keys())
-        st.caption(f"🔍 Secrets keys: {_keys}")
-    except Exception as _e:
-        st.caption(f"🔍 Secrets error: {_e}")
-
     st.divider()
     st.markdown("### ⚙️ Ключи API")
     if not groq_key:
@@ -1007,17 +1077,27 @@ if run:
     ref_handles = parse_handles(reference_raw)
     manual_handles = parse_handles(manual_raw)
 
-    # 2. Ключевые слова
+    # 2. Получаем данные каналов-ориентиров через Bot API (для анализа аудитории)
+    ref_channels_info = []
+    if ref_handles:
+        with st.spinner("🔍 Анализирую каналы-ориентиры..."):
+            dummy_prog = st.empty()
+            dummy_stat = st.empty()
+            ref_channels_info = enrich_channels(bot_token, ref_handles[:5], dummy_prog, dummy_stat)
+            dummy_prog.empty()
+            dummy_stat.empty()
+
+    # 3. Ключевые слова — с учётом ориентиров
     with st.spinner("🧠 Анализирую аудиторию и формирую запросы..."):
-        keywords = extract_keywords(brief, client)
+        keywords = extract_keywords(brief, client, ref_channels_info or None)
     if keywords:
         st.caption(f"Ключевые слова: {', '.join(keywords)}")
 
-    # 2a. Telemetr → данные каналов напрямую (БЕЗ Bot API верификации)
+    # 4a. Telemetr → данные каналов напрямую (БЕЗ Bot API верификации)
     telemetr_channels = []
     if telemetr_key:
         with st.spinner("🔍 Ищу каналы через Telemetr.io..."):
-            telemetr_channels = search_telemetr(telemetr_key, keywords)
+            telemetr_channels = search_telemetr(telemetr_key, keywords, ref_handles or None)
         if telemetr_channels:
             st.info(f"📡 Telemetr.io: найдено {len(telemetr_channels)} каналов")
         else:
@@ -1027,7 +1107,7 @@ if run:
 
     telemetr_usernames = {c["username"].lower() for c in telemetr_channels}
 
-    # 2b. AI генерация — только если Telemetr нашёл мало
+    # 4b. AI генерация — только если Telemetr нашёл мало
     ai_handles = []
     ai_needed = max(channel_count - len(telemetr_channels), 0)
     if ai_needed > 0:
@@ -1045,7 +1125,7 @@ if run:
         st.error("Не удалось найти каналы. Попробуй переформулировать бриф.")
         st.stop()
 
-    # 2c. Bot API верификация — только для AI и ручных каналов
+    # 4c. Bot API верификация — только для AI и ручных каналов
     to_verify = list(dict.fromkeys(
         [h for h in ai_handles + ref_handles + manual_handles
          if h.lower() not in telemetr_usernames]
