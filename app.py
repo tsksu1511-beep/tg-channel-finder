@@ -780,57 +780,54 @@ def generate_channels(brief: dict, reference_channels: list, client: Groq, count
         return []
 
 
+def _score_batch(batch: list, brief: dict, client: Groq) -> dict:
+    """Оценивает один батч каналов, возвращает {username: {score, reason}}."""
+    summaries = [
+        {
+            "u": ch["username"],
+            "t": ch.get("title", "")[:60],
+            "d": ch.get("description", "")[:80],
+        }
+        for ch in batch
+    ]
+    prompt = f"""Оцени Telegram-каналы для рекламы. Критерий: совпадает ли АУДИТОРИЯ канала с ЦА.
+
+Продукт: {brief.get("product", "")}
+ЦА: {brief.get("target_audience", "")}
+Пол: {brief.get("gender", "все")} · Возраст: {brief.get("age_range", "")}
+
+70-100 = аудитория совпадает. 40-69 = частично. 0-39 = не совпадает.
+
+Каналы (u=username, t=title, d=description):
+{json.dumps(summaries, ensure_ascii=False)}
+
+Верни JSON: {{"scores": [{{"u": "username", "s": 85, "r": "причина (1 предложение)"}}, ...]}}"""
+    try:
+        result = ask_json(client, prompt)
+        scores = result.get("scores", [])
+        return {s["u"]: {"score": int(s.get("s", 0)), "reason": s.get("r", "")} for s in scores if "u" in s}
+    except Exception:
+        return {}
+
+
 def score_channels(channels: list, brief: dict, client: Groq) -> list:
     if not channels:
         return []
 
-    summaries = [
-        {
-            "username": ch["username"],
-            "title": ch.get("title", ""),
-            "description": ch.get("description", "")[:120],
-            "subscribers": ch.get("subscribers", 0),
-        }
-        for ch in channels
-    ]
+    score_map = {}
+    batch_size = 20
+    for i in range(0, len(channels), batch_size):
+        batch = channels[i:i + batch_size]
+        result = _score_batch(batch, brief, client)
+        score_map.update(result)
+        if i + batch_size < len(channels):
+            time.sleep(1)  # небольшая пауза между батчами
 
-    prompt = f"""Оцени Telegram-каналы для рекламного размещения. Главный критерий — совпадение АУДИТОРИИ канала с целевой аудиторией продукта.
-
-Продукт: {brief.get("product", "")}
-Целевая аудитория: {brief.get("target_audience", "")}
-Пол: {brief.get("gender", "все")} · Возраст: {brief.get("age_range", "")}
-Ниша: {brief.get("niche", "")}
-
-Оценивай по критериям:
-- Аудитория канала совпадает с ЦА (пол, возраст, интересы, доход) — это главное (60 баллов)
-- Тематика канала близка к нише продукта (20 баллов)
-- Размер аудитории достаточный (20 баллов)
-
-Высокий балл (70-100): аудитория ТОЧНО совпадает. Средний (40-69): частично. Низкий (0-39): не совпадает.
-
-Каналы:
-{json.dumps(summaries, ensure_ascii=False)}
-
-Верни JSON:
-{{"scores": [{{"username": "...", "score": 85, "reason": "краткое объяснение на русском (1 предложение)"}}, ...]}}"""
-
-    try:
-        result = ask_json(client, prompt)
-        scores = result.get("scores", result) if isinstance(result, dict) else result
-        if not isinstance(scores, list):
-            raise ValueError("не список")
-        score_map = {s["username"]: s for s in scores}
-        for ch in channels:
-            s = score_map.get(ch["username"], {})
-            ch["ai_score"] = int(s.get("score", 0))
-            ch["ai_reason"] = s.get("reason", "")
-        return sorted(channels, key=lambda x: x.get("ai_score", 0), reverse=True)
-    except Exception as e:
-        st.warning(f"Ошибка скоринга: {e}")
-        for ch in channels:
-            ch.setdefault("ai_score", 0)
-            ch.setdefault("ai_reason", "")
-        return channels
+    for ch in channels:
+        s = score_map.get(ch["username"], {})
+        ch["ai_score"] = s.get("score", 0)
+        ch["ai_reason"] = s.get("reason", "")
+    return sorted(channels, key=lambda x: x.get("ai_score", 0), reverse=True)
 
 
 # ─── Telegram Bot API ─────────────────────────────────────────────────────────
