@@ -843,18 +843,26 @@ def score_channels(channels: list, brief: dict, client: Groq) -> list:
         return []
 
     score_map = {}
-    batch_size = 20
-    for i in range(0, len(channels), batch_size):
-        batch = channels[i:i + batch_size]
+    # Скорим только первые 60 каналов (по подписчикам), остальные получают 50
+    channels_sorted_by_subs = sorted(channels, key=lambda x: x.get("subscribers", 0), reverse=True)
+    to_score = channels_sorted_by_subs[:60]
+    not_scored = channels_sorted_by_subs[60:]
+
+    score_map = {}
+    batch_size = 15  # меньший батч = меньше токенов за раз
+    for i in range(0, len(to_score), batch_size):
+        batch = to_score[i:i + batch_size]
         result = _score_batch(batch, brief, client)
-        score_map.update(result)
-        if i + batch_size < len(channels):
-            time.sleep(1)  # небольшая пауза между батчами
+        # normalize to lowercase for case-insensitive lookup
+        score_map.update({k.lower(): v for k, v in result.items()})
+        if i + batch_size < len(to_score):
+            time.sleep(12)  # 12s пауза чтобы не превысить 6000 TPM
 
     for ch in channels:
-        s = score_map.get(ch["username"], {})
-        ch["ai_score"] = s.get("score", 0)
-        ch["ai_reason"] = s.get("reason", "")
+        s = score_map.get(ch["username"].lower(), {})
+        # если скоринг вернул пустой результат — ставим 50 (нейтральная оценка)
+        ch["ai_score"] = s.get("score", 50) if s else 50
+        ch["ai_reason"] = s.get("reason", "Не оценено (канал за пределами топ-60 по размеру)")
     return sorted(channels, key=lambda x: x.get("ai_score", 0), reverse=True)
 
 
@@ -1228,7 +1236,7 @@ if "scored" in st.session_state:
 
     rf1, rf2 = st.columns([2, 1])
     with rf1:
-        min_score_f = st.slider("Минимальная оценка AI", 0, 100, 30, key="score_f")
+        min_score_f = st.slider("Минимальная оценка AI", 0, 100, 0, key="score_f")
     with rf2:
         sort_by = st.selectbox("Сортировка", ["Оценка AI", "Подписчики"], key="sort_f")
 
