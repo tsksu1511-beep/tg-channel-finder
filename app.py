@@ -569,27 +569,61 @@ def search_via_mtproto(session: str, keywords: list) -> list:
 
 def search_telemetr(api_key: str, keywords: list, limit_per_kw: int = 50) -> list:
     """Поиск каналов через Telemetr.io API по ключевым словам."""
-    found = {}
+    internal_ids = {}
+
+    # Шаг 1: поиск по ключевым словам → internal_id (макс 25 на бесплатном тарифе)
     for kw in keywords[:8]:
         try:
             resp = httpx.get(
                 "https://api.telemetr.io/v1/channels/search",
                 headers={"x-api-key": api_key},
-                params={"term": kw, "language": "ru", "limit": limit_per_kw},
+                params={"term": kw, "limit": 25},
                 timeout=15,
             )
             if resp.status_code != 200:
                 continue
             data = resp.json()
-            items = data if isinstance(data, list) else data.get("items", data.get("channels", []))
-            for ch in items:
-                uname = ch.get("username") or ch.get("peer_id") or ch.get("link", "").replace("https://t.me/", "")
-                if uname and uname not in found:
-                    found[uname] = uname
+            if not isinstance(data, list):
+                continue
+            for ch in data:
+                if not isinstance(ch, dict):
+                    continue
+                iid = ch.get("internal_id")
+                if iid and iid not in internal_ids:
+                    internal_ids[iid] = True
             time.sleep(0.5)
         except Exception:
             continue
-    return list(found.keys())
+
+    if not internal_ids:
+        return []
+
+    # Шаг 2: батч-запрос для получения username через поле link
+    usernames = []
+    all_ids = list(internal_ids.keys())
+    for i in range(0, len(all_ids), 100):
+        batch = all_ids[i:i + 100]
+        try:
+            resp = httpx.get(
+                "https://api.telemetr.io/v1/channels/info-batch",
+                headers={"x-api-key": api_key},
+                params={"ids": ",".join(batch)},
+                timeout=15,
+            )
+            if resp.status_code != 200:
+                continue
+            data = resp.json()
+            channels = data.get("channels", data) if isinstance(data, dict) else data
+            for ch in channels:
+                link = ch.get("link") or ""
+                if "t.me/" in link:
+                    uname = link.split("t.me/")[-1].strip("/")
+                    if uname and not uname.startswith("+"):
+                        usernames.append(uname)
+        except Exception:
+            continue
+
+    return usernames
 
 
 def search_web_for_channels(brief: dict, client: Groq, target_count: int) -> list:
