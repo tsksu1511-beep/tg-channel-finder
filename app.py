@@ -505,6 +505,47 @@ def search_duckduckgo(query: str) -> list:
         return []
 
 
+def search_via_mtproto(session: str, keywords: list) -> list:
+    """Поиск реальных каналов через Telegram MTProto. Макс 10 слов, 50 результатов каждое."""
+    try:
+        from telethon import TelegramClient
+        from telethon.sessions import StringSession
+        from telethon.tl.functions.contacts import SearchRequest
+    except ImportError:
+        return []
+
+    import asyncio
+
+    keywords = keywords[:10]
+
+    async def _run():
+        client = TelegramClient(StringSession(session), 2040, "b18441a1ff607e10a989891a5462e627")
+        await client.connect()
+        if not await client.is_user_authorized():
+            return []
+        found = {}
+        for kw in keywords:
+            try:
+                res = await client(SearchRequest(q=kw, limit=50))
+                for ch in res.chats:
+                    uname = getattr(ch, "username", None)
+                    if uname and uname not in found:
+                        found[uname] = uname
+                await asyncio.sleep(2)
+            except Exception as e:
+                await asyncio.sleep(10 if "FLOOD" in str(e).upper() else 3)
+        await client.disconnect()
+        return list(found.keys())
+
+    loop = asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(_run())
+    except Exception:
+        return []
+    finally:
+        loop.close()
+
+
 def search_web_for_channels(brief: dict, client: Groq, target_count: int) -> list:
     keywords = extract_keywords(brief, client)
     if not keywords:
@@ -843,26 +884,36 @@ if run:
     ref_handles = parse_handles(reference_raw)
     manual_handles = parse_handles(manual_raw)
 
-    # 2а. Веб-поиск реальных каналов
+    # 2. Поиск каналов
     ask_count = channel_count * 3
-    with st.spinner("🔍 Ищу реальные каналы через DuckDuckGo..."):
-        web_handles = search_web_for_channels(brief, client, ask_count)
+    tg_session = get_secret("TELEGRAM_SESSION")
+    mtproto_handles = []
 
-    if web_handles:
-        st.info(f"🌐 Нашёл {len(web_handles)} каналов через веб-поиск")
+    # 2а. MTProto поиск (если есть сессия)
+    if tg_session:
+        with st.spinner("🔍 Ищу каналы через Telegram..."):
+            keywords = extract_keywords(brief, client)
+            if keywords:
+                st.caption(f"Ключевые слова: {', '.join(keywords)}")
+                mtproto_handles = search_via_mtproto(tg_session, keywords)
+
+        if mtproto_handles:
+            st.info(f"📡 Telegram поиск: {len(mtproto_handles)} каналов")
+        else:
+            st.warning("MTProto не вернул результатов — использую AI")
     else:
-        st.warning("Веб-поиск не дал результатов — использую только AI")
+        st.caption("Сессия Telegram не настроена — использую AI генерацию")
 
     # 2б. AI генерация для пополнения
-    ai_supplement = max(ask_count - len(web_handles), channel_count * 2)
+    ai_supplement = max(ask_count - len(mtproto_handles), channel_count * 2)
     with st.spinner("🤖 AI подбирает дополнительные каналы..."):
         ai_handles = generate_channels(brief, ref_handles, client, ai_supplement)
 
-    if not web_handles and not ai_handles:
+    if not mtproto_handles and not ai_handles:
         st.error("Не удалось найти каналы. Попробуй переформулировать бриф.")
         st.stop()
 
-    all_handles = list(dict.fromkeys(web_handles + ai_handles + ref_handles + manual_handles))
+    all_handles = list(dict.fromkeys(mtproto_handles + ai_handles + ref_handles + manual_handles))
     tried = set(all_handles)
 
     # 3. Проверка раунд 1
@@ -878,9 +929,7 @@ if run:
         still_need = (channel_count - len(enriched)) * 3
         stat.markdown(f'<div class="status-bar">🔄 Найдено {len(enriched)} из {channel_count} — запускаю раунд 2...</div>', unsafe_allow_html=True)
         with st.spinner("🔍 Ищу ещё каналы (раунд 2)..."):
-            web_handles_2 = search_web_for_channels(brief, client, still_need)
             ai_handles_2 = generate_channels(brief, ref_handles, client, still_need, exclude=tried)
-            ai_handles_2 = web_handles_2 + [h for h in ai_handles_2 if h not in set(web_handles_2)]
         new_handles = [h for h in ai_handles_2 if h not in tried]
         tried.update(new_handles)
         if new_handles:
