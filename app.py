@@ -567,6 +567,31 @@ def search_via_mtproto(session: str, keywords: list) -> list:
         return []
 
 
+def search_telemetr(api_key: str, keywords: list, limit_per_kw: int = 50) -> list:
+    """Поиск каналов через Telemetr.io API по ключевым словам."""
+    found = {}
+    for kw in keywords[:8]:
+        try:
+            resp = httpx.get(
+                "https://api.telemetr.io/v1/channels/search",
+                headers={"x-api-key": api_key},
+                params={"term": kw, "language": "ru", "limit": limit_per_kw},
+                timeout=15,
+            )
+            if resp.status_code != 200:
+                continue
+            data = resp.json()
+            items = data if isinstance(data, list) else data.get("items", data.get("channels", []))
+            for ch in items:
+                uname = ch.get("username") or ch.get("peer_id") or ch.get("link", "").replace("https://t.me/", "")
+                if uname and uname not in found:
+                    found[uname] = uname
+            time.sleep(0.5)
+        except Exception:
+            continue
+    return list(found.keys())
+
+
 def search_web_for_channels(brief: dict, client: Groq, target_count: int) -> list:
     keywords = extract_keywords(brief, client)
     if not keywords:
@@ -908,24 +933,35 @@ if run:
 
     # 2. Поиск каналов
     ask_count = channel_count * 3
-    tg_session = get_secret("TELEGRAM_SESSION")
+    telemetr_key = get_secret("TELEMETR_API_KEY")
+    tg_session   = get_secret("TELEGRAM_SESSION")
     mtproto_handles = []
 
-    # 2а. MTProto поиск (если есть сессия)
-    if tg_session:
-        st.caption(f"Сессия найдена: {tg_session[:12]}…")
-        with st.spinner("🔍 Ищу каналы через Telegram..."):
-            keywords = extract_keywords(brief, client)
-            if keywords:
-                st.caption(f"Ключевые слова: {', '.join(keywords)}")
-                mtproto_handles = search_via_mtproto(tg_session, keywords)
+    # Извлекаем ключевые слова один раз для обоих методов
+    with st.spinner("🧠 Извлекаю ключевые слова из брифа..."):
+        keywords = extract_keywords(brief, client)
+    if keywords:
+        st.caption(f"Ключевые слова: {', '.join(keywords)}")
 
+    # 2а. Telemetr.io (приоритет — реальная база каналов)
+    if telemetr_key:
+        with st.spinner("🔍 Ищу каналы через Telemetr.io..."):
+            mtproto_handles = search_telemetr(telemetr_key, keywords, limit_per_kw=50)
         if mtproto_handles:
-            st.info(f"📡 Telegram поиск: {len(mtproto_handles)} каналов")
+            st.info(f"📡 Telemetr.io: найдено {len(mtproto_handles)} каналов")
+        else:
+            st.warning("Telemetr.io не вернул результатов")
+
+    # 2б. MTProto как резерв (если нет Telemetr или нашёл мало)
+    elif tg_session:
+        with st.spinner("🔍 Ищу каналы через Telegram MTProto..."):
+            mtproto_handles = search_via_mtproto(tg_session, keywords)
+        if mtproto_handles:
+            st.info(f"📡 MTProto: найдено {len(mtproto_handles)} каналов")
         else:
             st.warning("MTProto не вернул результатов — использую AI")
     else:
-        st.warning("TELEGRAM_SESSION не найдена в secrets — использую AI генерацию")
+        st.caption("Поиск через API не настроен — использую AI генерацию")
 
     # 2б. AI генерация батчами по 40 (Groq не осиливает больше за раз)
     ai_needed = max(channel_count * 2 - len(mtproto_handles), channel_count)
